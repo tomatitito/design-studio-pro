@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { logMiddleware } from "./logMiddleware";
 
 export interface HistoryState<T = unknown> {
   past: T[];
@@ -14,7 +15,7 @@ export interface HistoryState<T = unknown> {
 }
 
 export const useHistoryStore = create<HistoryState>()(
-  immer((set, get) => ({
+  logMiddleware("historyStore")(immer((set, get) => ({
     past: [],
     present: null,
     future: [],
@@ -58,5 +59,5 @@ export const useHistoryStore = create<HistoryState>()(
     canUndo: () => get().past.length > 0,
 
     canRedo: () => get().future.length > 0,
-  })),
+  }))),
 );

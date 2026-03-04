@@ -24,6 +24,12 @@ pub fn greet(name: &str) -> String {
     format!("Hello, {}! Welcome to Design Studio Pro.", name)
 }
 
+/// Log a Zustand state change from the frontend.
+#[tauri::command]
+pub fn log_zustand(entry: &str) {
+    log::info!(target: "zustand", "{}", entry);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

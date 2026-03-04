@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { Project, Page } from "../types";
+import { logMiddleware } from "./logMiddleware";
 
 export interface ProjectState {
   currentProject: Project | null;
@@ -17,7 +18,7 @@ export interface ProjectState {
 }
 
 export const useProjectStore = create<ProjectState>()(
-  immer((set) => ({
+  logMiddleware("projectStore")(immer((set) => ({
     currentProject: null,
     projects: [],
     isDirty: false,
@@ -77,5 +78,5 @@ export const useProjectStore = create<ProjectState>()(
           }
         }
       }),
-  })),
+  }))),
 );

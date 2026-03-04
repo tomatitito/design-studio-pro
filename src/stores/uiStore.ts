@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { Position } from "../types";
+import { logMiddleware } from "./logMiddleware";
 
 export type Tool = "select" | "text" | "shape" | "image" | "pan" | "zoom";
 export type Panel = "layers" | "properties" | "assets" | "pages";
@@ -24,7 +25,7 @@ export interface UIState {
 }
 
 export const useUIStore = create<UIState>()(
-  immer((set) => ({
+  logMiddleware("uiStore")(immer((set) => ({
     selectedTool: "select",
     selectedElementIds: [],
     zoom: 1,
@@ -78,5 +79,5 @@ export const useUIStore = create<UIState>()(
       set((state) => {
         state.activePanel = panel;
       }),
-  })),
+  }))),
 );

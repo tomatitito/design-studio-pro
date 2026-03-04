@@ -19,6 +19,7 @@ pub fn run() {
         .manage(commands::AssetStore::new())
         .invoke_handler(tauri::generate_handler![
             commands::greet,
+            commands::log_zustand,
             // Project commands
             commands::project::create_project,
             commands::project::get_project_info,
