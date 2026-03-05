@@ -27,6 +27,16 @@ uuid = { version = "1", features = ["v4"] }
 image = "0.25"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 printpdf = "0.7"
+clap = { version = "4", features = ["derive"], optional = true }
+tempfile = { version = "3", optional = true }
+
+[features]
+cli = ["clap", "tempfile"]
+
+[[bin]]
+name = "dsp"
+path = "src/bin/cli.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tempfile = "3"
