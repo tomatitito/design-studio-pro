@@ -97,6 +97,62 @@ export function updatePageSheet(
 }
 
 /**
+ * Compute the pan offset that centers the sheet in the viewport at the given zoom.
+ */
+export function computeCenteredPan(
+  canvas: FabricCanvas,
+  sheet: Rect,
+  zoom: number,
+): { x: number; y: number } {
+  const viewportW = canvas.getWidth();
+  const viewportH = canvas.getHeight();
+  const sheetCenterX = sheet.left! + sheet.width! / 2;
+  const sheetCenterY = sheet.top! + sheet.height! / 2;
+  return {
+    x: viewportW / 2 - sheetCenterX * zoom,
+    y: viewportH / 2 - sheetCenterY * zoom,
+  };
+}
+
+/**
+ * Clamp a pan offset so the viewport never shows area beyond the sheet edges.
+ * When zoom is small enough that the sheet fits entirely, returns the centered pan.
+ * When zoomed in, constrains to sheet bounds.
+ */
+export function clampPanToSheet(
+  canvas: FabricCanvas,
+  sheet: Rect,
+  zoom: number,
+  pan: { x: number; y: number },
+): { x: number; y: number } {
+  const viewportW = canvas.getWidth();
+  const viewportH = canvas.getHeight();
+  const sheetW = sheet.width! * zoom;
+  const sheetH = sheet.height! * zoom;
+
+  let x = pan.x;
+  let y = pan.y;
+
+  if (sheetW <= viewportW) {
+    x = computeCenteredPan(canvas, sheet, zoom).x;
+  } else {
+    const minX = viewportW - (sheet.left! + sheet.width!) * zoom;
+    const maxX = -sheet.left! * zoom;
+    x = Math.max(minX, Math.min(maxX, pan.x));
+  }
+
+  if (sheetH <= viewportH) {
+    y = computeCenteredPan(canvas, sheet, zoom).y;
+  } else {
+    const minY = viewportH - (sheet.top! + sheet.height!) * zoom;
+    const maxY = -sheet.top! * zoom;
+    y = Math.max(minY, Math.min(maxY, pan.y));
+  }
+
+  return { x, y };
+}
+
+/**
  * Fit the page sheet within the visible viewport by adjusting zoom and pan.
  * Adds padding so the sheet shadow is also visible.
  */

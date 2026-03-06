@@ -100,7 +100,7 @@ describe("App", () => {
     expect(screen.getByTestId("tool-select")).toBeInTheDocument();
     expect(screen.getByTestId("tool-text")).toBeInTheDocument();
     expect(screen.getByTestId("tool-shape")).toBeInTheDocument();
-    expect(screen.getByTestId("tool-pan")).toBeInTheDocument();
+    expect(screen.getByTestId("tool-image")).toBeInTheDocument();
   });
 
   it("renders zoom controls", () => {

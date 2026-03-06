@@ -18,6 +18,8 @@ export {
   createPageSheet,
   updatePageSheet,
   fitSheetInView,
+  computeCenteredPan,
+  clampPanToSheet,
 } from "./sheet";
 export type { PagePreset } from "./sheet";
 export { collectExportData, exportPdf } from "./export";

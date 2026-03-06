@@ -3,7 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import type { Position } from "../types";
 import { logMiddleware } from "./logMiddleware";
 
-export type Tool = "select" | "text" | "shape" | "image" | "pan" | "zoom";
+export type Tool = "select" | "text" | "shape" | "image" | "zoom";
 export type Panel = "layers" | "properties" | "assets" | "pages";
 
 export interface UIState {

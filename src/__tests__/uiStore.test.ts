@@ -21,8 +21,8 @@ describe("uiStore", () => {
 
     it("changes between tools", () => {
       useUIStore.getState().setSelectedTool("shape");
-      useUIStore.getState().setSelectedTool("pan");
-      expect(useUIStore.getState().selectedTool).toBe("pan");
+      useUIStore.getState().setSelectedTool("text");
+      expect(useUIStore.getState().selectedTool).toBe("text");
     });
   });
 

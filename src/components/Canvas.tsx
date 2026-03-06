@@ -13,6 +13,7 @@ import {
   createPageSheet,
   updatePageSheet,
   fitSheetInView,
+  clampPanToSheet,
   getDroppedImageFiles,
   addImageToCanvas,
   screenToCanvas,
@@ -61,6 +62,22 @@ export function Canvas() {
     if (!container) return;
     const { width, height } = container.getBoundingClientRect();
     fabricCanvas.setDimensions({ width, height });
+
+    // Re-center/clamp the sheet after resize
+    const sheet = sheetRef.current;
+    if (sheet) {
+      const zoom = fabricCanvas.getZoom();
+      const vpt = fabricCanvas.viewportTransform;
+      const clamped = clampPanToSheet(fabricCanvas, sheet, zoom, {
+        x: vpt[4],
+        y: vpt[5],
+      });
+      vpt[4] = clamped.x;
+      vpt[5] = clamped.y;
+      fabricCanvas.setViewportTransform([...vpt] as typeof vpt);
+      useUIStore.getState().setPanOffset(clamped);
+    }
+
     fabricCanvas.requestRenderAll();
   }, []);
 
@@ -86,7 +103,7 @@ export function Canvas() {
     }
 
     const detachHandlers = attachCanvasHandlers(fabricCanvas);
-    const detachZoomPan = attachZoomPanHandlers(fabricCanvas);
+    const detachZoomPan = attachZoomPanHandlers(fabricCanvas, sheetRef);
     const detachHistory = attachHistoryTracking(fabricCanvas);
     const detachUndoRedoShortcuts = attachUndoRedoShortcuts();
     const detachKeyboardShortcuts = attachKeyboardShortcuts(fabricCanvas);

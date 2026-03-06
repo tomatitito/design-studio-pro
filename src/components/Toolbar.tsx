@@ -1,6 +1,7 @@
 import { useUIStore, useHistoryStore, useProjectStore, type Tool } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
-import { restoreSnapshot, importImageViaDialog, addImageToCanvas, PAGE_PRESETS, exportPdf } from "../canvas";
+import { restoreSnapshot, importImageViaDialog, addImageToCanvas, PAGE_PRESETS, fitSheetInView, clampPanToSheet, exportPdf } from "../canvas";
+import type { Rect } from "fabric";
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -11,7 +12,6 @@ const TOOLS: { id: Tool; label: string; shortcut: string }[] = [
   { id: "text", label: "Text", shortcut: "T" },
   { id: "shape", label: "Shape", shortcut: "S" },
   { id: "image", label: "Image", shortcut: "I" },
-  { id: "pan", label: "Pan", shortcut: "H" },
 ];
 
 export function Toolbar() {
@@ -36,23 +36,41 @@ export function Toolbar() {
     applyZoom(1);
   };
 
+  const getSheet = (): Rect | null => {
+    if (!canvas) return null;
+    return canvas.getObjects().find((o) => (o as any).isPageSheet) as Rect ?? null;
+  };
+
   const handleZoomFit = () => {
     if (!canvas) return;
-    // Reset to 100% zoom centered
-    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
-    setZoom(1);
-    setPanOffset({ x: 0, y: 0 });
-    canvas.requestRenderAll();
+    const sheet = getSheet();
+    if (sheet) {
+      fitSheetInView(canvas, sheet);
+    }
   };
 
   const applyZoom = (newZoom: number) => {
     if (!canvas) return;
-    // Zoom to center of the canvas
     const center = canvas.getCenterPoint();
     canvas.zoomToPoint(center, newZoom);
-    const vpt = canvas.viewportTransform;
-    setZoom(newZoom);
-    setPanOffset({ x: vpt[4], y: vpt[5] });
+
+    const sheet = getSheet();
+    if (sheet) {
+      const vpt = canvas.viewportTransform;
+      const clamped = clampPanToSheet(canvas, sheet, newZoom, {
+        x: vpt[4],
+        y: vpt[5],
+      });
+      vpt[4] = clamped.x;
+      vpt[5] = clamped.y;
+      canvas.setViewportTransform([...vpt] as typeof canvas.viewportTransform);
+      setZoom(newZoom);
+      setPanOffset(clamped);
+    } else {
+      const vpt = canvas.viewportTransform;
+      setZoom(newZoom);
+      setPanOffset({ x: vpt[4], y: vpt[5] });
+    }
     canvas.requestRenderAll();
   };
 
