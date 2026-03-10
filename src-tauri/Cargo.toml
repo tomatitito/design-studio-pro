@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Design Studio Pro"
 authors = ["you"]
 edition = "2021"
+default-run = "design-studio-pro"
 
 [lib]
 name = "design_studio_pro_lib"

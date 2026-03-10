@@ -116,6 +116,9 @@ export async function addImageToCanvas(
     });
   }
 
+  // Lock uniform scaling so images always preserve their aspect ratio
+  img.set({ lockUniScaling: true });
+
   // Store the original filesystem path so the export pipeline can reference
   // the actual file instead of the convertFileSrc URL.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

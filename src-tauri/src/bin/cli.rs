@@ -39,7 +39,7 @@ enum Commands {
         #[arg(long)]
         position: Vec<String>,
 
-        /// Size in mm as W,H for each --add-image (repeatable, default: auto)
+        /// Size in mm as W,H or W for each --add-image (repeatable, default: auto)
         #[arg(long = "image-size")]
         image_size: Vec<String>,
 
@@ -61,7 +61,7 @@ enum Commands {
         #[arg(long)]
         position: Vec<String>,
 
-        /// Size in mm as W,H for each --add-image (repeatable, default: auto)
+        /// Size in mm as W,H or W for each --add-image (repeatable, default: auto)
         #[arg(long = "image-size")]
         image_size: Vec<String>,
 
@@ -87,7 +87,7 @@ enum Commands {
         #[arg(long)]
         position: Vec<String>,
 
-        /// Size in mm as W,H for each --image (repeatable, default: auto)
+        /// Size in mm as W,H or W for each --image (repeatable, default: auto)
         #[arg(long = "image-size")]
         image_size: Vec<String>,
 
@@ -138,21 +138,32 @@ fn parse_position(s: &str) -> Result<(f64, f64), String> {
     Ok((x, y))
 }
 
-/// Parse "W,H" into (f64, f64).
+/// Parse "W,H" or a single "W" into dimensions.
+/// A single value means "width only" — height will be resolved from aspect ratio later.
+/// Returns (width, height) where height is 0.0 as a sentinel for "derive from aspect ratio".
 fn parse_size(s: &str) -> Result<(f64, f64), String> {
     let parts: Vec<&str> = s.split(',').collect();
-    if parts.len() != 2 {
-        return Err(format!("Invalid size '{}'. Use W,H (e.g. 50,80)", s));
+    match parts.len() {
+        1 => {
+            let w = parts[0]
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid width in size '{}'", s))?;
+            Ok((w, 0.0))
+        }
+        2 => {
+            let w = parts[0]
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid width in size '{}'", s))?;
+            let h = parts[1]
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("Invalid height in size '{}'", s))?;
+            Ok((w, h))
+        }
+        _ => Err(format!("Invalid size '{}'. Use W,H or W (e.g. 50,80 or 100)", s)),
     }
-    let w = parts[0]
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| format!("Invalid width in size '{}'", s))?;
-    let h = parts[1]
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| format!("Invalid height in size '{}'", s))?;
-    Ok((w, h))
 }
 
 /// Get image dimensions in mm at 72 DPI, or fall back to a default.
@@ -168,9 +179,20 @@ fn auto_image_size_mm(image_path: &str) -> (f64, f64) {
 }
 
 /// Resolve image size: use explicit if provided, otherwise auto-detect.
+/// When a single width value is given (height sentinel = 0.0), derive height from aspect ratio.
 fn resolve_image_size(explicit: Option<&String>, image_path: &str) -> Result<(f64, f64), String> {
     match explicit {
-        Some(s) => parse_size(s),
+        Some(s) => {
+            let (w, h) = parse_size(s)?;
+            if h == 0.0 {
+                // Single-value mode: derive height from image aspect ratio
+                let (auto_w, auto_h) = auto_image_size_mm(image_path);
+                let aspect = if auto_w > 0.0 { auto_h / auto_w } else { 1.0 };
+                Ok((w, w * aspect))
+            } else {
+                Ok((w, h))
+            }
+        }
         None => Ok(auto_image_size_mm(image_path)),
     }
 }
