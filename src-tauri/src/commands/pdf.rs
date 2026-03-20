@@ -44,6 +44,7 @@ mod tests {
             page: PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
+                background: Some("#ffffff".to_string()),
             },
             images: vec![],
             output_path: output_path.clone(),
@@ -60,6 +61,7 @@ mod tests {
             page: PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
+                background: Some("#ffffff".to_string()),
             },
             images: vec![PdfImageElement {
                 image_path: "/nonexistent/image.png".to_string(),

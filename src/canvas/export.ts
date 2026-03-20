@@ -9,6 +9,7 @@ import { useProjectStore } from "../stores";
 export interface PdfPageConfig {
   widthMm: number;
   heightMm: number;
+  background?: string;
 }
 
 /** An image element to be placed in the PDF. */
@@ -38,6 +39,7 @@ export function collectExportData(
   canvas: FabricCanvas,
   pageWidthMm: number,
   pageHeightMm: number,
+  background?: string,
 ): Omit<PdfExportRequest, "outputPath"> {
   const objects = canvas.getObjects();
 
@@ -82,7 +84,7 @@ export function collectExportData(
   }
 
   return {
-    page: { widthMm: pageWidthMm, heightMm: pageHeightMm },
+    page: { widthMm: pageWidthMm, heightMm: pageHeightMm, background },
     images,
   };
 }
@@ -125,7 +127,8 @@ export async function exportPdf(canvas: FabricCanvas): Promise<void> {
 
   if (!outputPath) return;
 
-  const data = collectExportData(canvas, widthMm, heightMm);
+  const pageBackground = project.pages[0]?.backgroundColor;
+  const data = collectExportData(canvas, widthMm, heightMm, pageBackground);
   const request: PdfExportRequest = { ...data, outputPath };
 
   try {

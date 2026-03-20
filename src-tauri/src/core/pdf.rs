@@ -3,6 +3,7 @@
 //! This module provides the core logic for exporting designs to PDF format.
 //! It handles page setup, image positioning, and coordinate transformations.
 
+use ::image::{ImageBuffer, Rgb, RgbImage};
 use printpdf::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -14,6 +15,8 @@ use std::io::{BufWriter, Cursor};
 pub struct PdfPageConfig {
     pub width_mm: f64,
     pub height_mm: f64,
+    #[serde(default)]
+    pub background: Option<String>,
 }
 
 /// An image element to be placed in the PDF.
@@ -37,6 +40,242 @@ pub struct PdfExportRequest {
     pub output_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum PdfBackgroundSpec {
+    Solid([u8; 3]),
+    LinearGradient {
+        angle_deg: f64,
+        stops: Vec<GradientStop>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct GradientStop {
+    color: [u8; 3],
+    offset: f64,
+}
+
+fn resolve_background_spec(input: &str) -> &str {
+    match input.trim() {
+        "paper-white" => "#ffffff",
+        "sandstone" => "#f4e7d3",
+        "sage" => "#dce8d8",
+        "midnight-ink" => "#22304a",
+        "sunset-bloom" => "linear-gradient(135deg, #f97316 0%, #ec4899 55%, #7c3aed 100%)",
+        "ocean-mist" => "linear-gradient(135deg, #0f766e 0%, #38bdf8 100%)",
+        "golden-hour" => "linear-gradient(160deg, #fff7cc 0%, #fbbf24 45%, #fb7185 100%)",
+        "forest-haze" => "linear-gradient(145deg, #1f4d3a 0%, #7dd3a7 100%)",
+        other => other,
+    }
+}
+
+fn parse_hex_color(input: &str) -> Option<[u8; 3]> {
+    let hex = input.trim().trim_start_matches('#');
+    match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+            Some([r, g, b])
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some([r, g, b])
+        }
+        _ => None,
+    }
+}
+
+fn split_gradient_args(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+
+    for ch in input.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_string());
+    }
+
+    parts
+}
+
+fn parse_gradient_stop(segment: &str, index: usize, total: usize) -> Option<GradientStop> {
+    let mut tokens = segment.split_whitespace();
+    let color = parse_hex_color(tokens.next()?)?;
+    let offset = tokens
+        .next()
+        .and_then(|token| token.strip_suffix('%'))
+        .and_then(|token| token.parse::<f64>().ok())
+        .map(|value| (value / 100.0).clamp(0.0, 1.0))
+        .unwrap_or_else(|| {
+            if total <= 1 {
+                0.0
+            } else {
+                index as f64 / (total - 1) as f64
+            }
+        });
+
+    Some(GradientStop { color, offset })
+}
+
+fn parse_background(input: &str) -> PdfBackgroundSpec {
+    let resolved = resolve_background_spec(input);
+    if let Some(color) = parse_hex_color(resolved) {
+        return PdfBackgroundSpec::Solid(color);
+    }
+
+    let inner = resolved
+        .strip_prefix("linear-gradient(")
+        .and_then(|value| value.strip_suffix(')'));
+    let Some(inner) = inner else {
+        return PdfBackgroundSpec::Solid([255, 255, 255]);
+    };
+
+    let parts = split_gradient_args(inner);
+    if parts.len() < 3 {
+        return PdfBackgroundSpec::Solid([255, 255, 255]);
+    }
+
+    let Some(angle_str) = parts[0].strip_suffix("deg") else {
+        return PdfBackgroundSpec::Solid([255, 255, 255]);
+    };
+    let Ok(angle_deg) = angle_str.parse::<f64>() else {
+        return PdfBackgroundSpec::Solid([255, 255, 255]);
+    };
+
+    let stops: Vec<GradientStop> = parts[1..]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, segment)| parse_gradient_stop(segment, index, parts.len() - 1))
+        .collect();
+
+    if stops.len() < 2 {
+        PdfBackgroundSpec::Solid([255, 255, 255])
+    } else {
+        PdfBackgroundSpec::LinearGradient { angle_deg, stops }
+    }
+}
+
+fn interpolate_channel(start: u8, end: u8, factor: f64) -> u8 {
+    (start as f64 + (end as f64 - start as f64) * factor)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
+fn sample_gradient_color(stops: &[GradientStop], position: f64) -> [u8; 3] {
+    if position <= stops[0].offset {
+        return stops[0].color;
+    }
+
+    for pair in stops.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        if position <= end.offset {
+            let span = (end.offset - start.offset).max(f64::EPSILON);
+            let factor = ((position - start.offset) / span).clamp(0.0, 1.0);
+            return [
+                interpolate_channel(start.color[0], end.color[0], factor),
+                interpolate_channel(start.color[1], end.color[1], factor),
+                interpolate_channel(start.color[2], end.color[2], factor),
+            ];
+        }
+    }
+
+    stops
+        .last()
+        .map(|stop| stop.color)
+        .unwrap_or([255, 255, 255])
+}
+
+fn render_background_image(spec: &PdfBackgroundSpec, width: u32, height: u32) -> RgbImage {
+    match spec {
+        PdfBackgroundSpec::Solid([r, g, b]) => {
+            ImageBuffer::from_pixel(width, height, Rgb([*r, *g, *b]))
+        }
+        PdfBackgroundSpec::LinearGradient { angle_deg, stops } => {
+            let mut image = RgbImage::new(width, height);
+            let radians = angle_deg.to_radians();
+            let dx = radians.sin();
+            let dy = -radians.cos();
+            let center_x = (width as f64 - 1.0) / 2.0;
+            let center_y = (height as f64 - 1.0) / 2.0;
+            let extent = center_x.abs().max(center_y.abs()).max(1.0);
+
+            for (x, y, pixel) in image.enumerate_pixels_mut() {
+                let projected =
+                    ((x as f64 - center_x) * dx + (y as f64 - center_y) * dy) / (extent * 2.0);
+                let color = sample_gradient_color(stops, (0.5 + projected).clamp(0.0, 1.0));
+                *pixel = Rgb(color);
+            }
+
+            image
+        }
+    }
+}
+
+fn add_background_to_layer(layer: &PdfLayerReference, page: &PdfPageConfig) {
+    let spec = parse_background(page.background.as_deref().unwrap_or("#ffffff"));
+    let long_edge = 1024.0;
+    let aspect = if page.width_mm > 0.0 {
+        page.height_mm / page.width_mm
+    } else {
+        1.0
+    };
+    let width_px = if aspect >= 1.0 {
+        (long_edge / aspect).round().clamp(256.0, long_edge) as u32
+    } else {
+        long_edge as u32
+    };
+    let height_px = if aspect >= 1.0 {
+        long_edge as u32
+    } else {
+        (long_edge * aspect).round().clamp(256.0, long_edge) as u32
+    };
+    let background = render_background_image(&spec, width_px.max(1), height_px.max(1));
+    let image_xobject = ImageXObject {
+        width: Px(width_px as usize),
+        height: Px(height_px as usize),
+        color_space: ColorSpace::Rgb,
+        bits_per_component: ColorBits::Bit8,
+        interpolate: true,
+        image_data: background.into_raw(),
+        image_filter: None,
+        clipping_bbox: None,
+        smask: None,
+    };
+
+    Image::from(image_xobject).add_to_layer(
+        layer.clone(),
+        ImageTransform {
+            translate_x: Some(Mm(0.0)),
+            translate_y: Some(Mm(0.0)),
+            scale_x: Some(page.width_mm as f32 / width_px as f32 * (72.0 / 25.4)),
+            scale_y: Some(page.height_mm as f32 / height_px as f32 * (72.0 / 25.4)),
+            dpi: Some(72.0),
+            ..Default::default()
+        },
+    );
+}
+
 /// Export a design to PDF format.
 ///
 /// # Arguments
@@ -53,25 +292,24 @@ pub struct PdfExportRequest {
 /// The input coordinates use a top-left origin (typical for design tools),
 /// but PDF uses a bottom-left origin. This function handles the conversion.
 pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
-    // Create a new PDF document
-    let (doc, page1, layer1) =
-        PdfDocument::new("Design Studio Pro Export", Mm(request.page.width_mm as f32), Mm(request.page.height_mm as f32), "Layer 1");
+    let (doc, page1, layer1) = PdfDocument::new(
+        "Design Studio Pro Export",
+        Mm(request.page.width_mm as f32),
+        Mm(request.page.height_mm as f32),
+        "Layer 1",
+    );
 
     let current_layer = doc.get_page(page1).get_layer(layer1);
+    add_background_to_layer(&current_layer, &request.page);
 
-    // Process each image element
     for img_elem in &request.images {
-        // Read the image file
         let image_bytes = std::fs::read(&img_elem.image_path)
             .map_err(|e| format!("Failed to read image {}: {}", img_elem.image_path, e))?;
 
-        // Determine image format from extension
         let path_lower = img_elem.image_path.to_lowercase();
         let is_jpeg = path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg");
 
         if is_jpeg {
-            // Handle JPEG images - use raw JPEG data
-            // First decode to get dimensions
             let img = ::image::ImageReader::new(Cursor::new(&image_bytes))
                 .with_guessed_format()
                 .map_err(|e| format!("Failed to create image reader: {}", e))?
@@ -80,8 +318,6 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
 
             let width_px = img.width();
             let height_px = img.height();
-
-            // Create ImageXObject with raw JPEG data
             let image_xobject = ImageXObject {
                 width: Px(width_px as usize),
                 height: Px(height_px as usize),
@@ -95,11 +331,8 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
             };
 
             let pdf_image = Image::from(image_xobject);
-
-            // Convert coordinates: PDF uses bottom-left origin
             let y_pdf = request.page.height_mm - img_elem.y_mm - img_elem.height_mm;
 
-            // Add image to the layer with transformations
             pdf_image.add_to_layer(
                 current_layer.clone(),
                 ImageTransform {
@@ -127,7 +360,6 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
                 },
             );
         } else {
-            // Handle PNG and other formats - decode to RGB8
             let img = ::image::ImageReader::new(Cursor::new(&image_bytes))
                 .with_guessed_format()
                 .map_err(|e| format!("Failed to create image reader: {}", e))?
@@ -138,8 +370,6 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
             let width_px = rgb_img.width();
             let height_px = rgb_img.height();
             let raw_pixels = rgb_img.into_raw();
-
-            // Create ImageXObject with raw RGB data
             let image_xobject = ImageXObject {
                 width: Px(width_px as usize),
                 height: Px(height_px as usize),
@@ -147,17 +377,14 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
                 bits_per_component: ColorBits::Bit8,
                 interpolate: true,
                 image_data: raw_pixels,
-                image_filter: None, // Raw data without compression
+                image_filter: None,
                 clipping_bbox: None,
                 smask: None,
             };
 
             let pdf_image = Image::from(image_xobject);
-
-            // Convert coordinates: PDF uses bottom-left origin
             let y_pdf = request.page.height_mm - img_elem.y_mm - img_elem.height_mm;
 
-            // Add image to the layer with transformations
             pdf_image.add_to_layer(
                 current_layer.clone(),
                 ImageTransform {
@@ -187,10 +414,8 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
         }
     }
 
-    // Save the PDF to the output path
     let file = File::create(&request.output_path)
         .map_err(|e| format!("Failed to create output file: {}", e))?;
-
     let mut writer = BufWriter::new(file);
     doc.save(&mut writer)
         .map_err(|e| format!("Failed to save PDF: {}", e))?;
@@ -212,6 +437,7 @@ mod tests {
             page: PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
+                background: Some("#ffffff".to_string()),
             },
             images: vec![],
             output_path: output_path.clone(),
@@ -220,7 +446,6 @@ mod tests {
         let result = export_pdf(&request);
         assert!(result.is_ok(), "Failed to export empty PDF: {:?}", result);
 
-        // Verify the file exists and starts with PDF header
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
     }
@@ -229,7 +454,6 @@ mod tests {
     fn test_export_with_image() {
         use ::image::{ImageBuffer, ImageFormat, Rgb};
 
-        // Create a test PNG image programmatically
         let mut img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(100, 100);
         for (x, y, pixel) in img_buffer.enumerate_pixels_mut() {
             let r = ((x as f32 / 100.0) * 255.0) as u8;
@@ -240,7 +464,9 @@ mod tests {
 
         let test_image = NamedTempFile::with_suffix(".png").unwrap();
         let test_image_path = test_image.path().to_str().unwrap().to_string();
-        img_buffer.save_with_format(&test_image_path, ImageFormat::Png).unwrap();
+        img_buffer
+            .save_with_format(&test_image_path, ImageFormat::Png)
+            .unwrap();
 
         let output = NamedTempFile::new().unwrap();
         let output_path = output.path().to_str().unwrap().to_string();
@@ -249,6 +475,7 @@ mod tests {
             page: PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
+                background: Some("sunset-bloom".to_string()),
             },
             images: vec![PdfImageElement {
                 image_path: test_image_path,
@@ -262,9 +489,12 @@ mod tests {
         };
 
         let result = export_pdf(&request);
-        assert!(result.is_ok(), "Failed to export PDF with image: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Failed to export PDF with image: {:?}",
+            result
+        );
 
-        // Verify the file exists and is a valid PDF
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
         assert!(pdf_bytes.len() > 1000, "PDF seems too small");
@@ -274,26 +504,27 @@ mod tests {
     fn test_y_coordinate_flipping() {
         use ::image::{ImageBuffer, ImageFormat, Rgb};
 
-        // Create a small test image
-        let img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(50, 50, Rgb([255, 0, 0]));
+        let img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(50, 50, Rgb([255, 0, 0]));
         let test_image = NamedTempFile::with_suffix(".png").unwrap();
         let test_image_path = test_image.path().to_str().unwrap().to_string();
-        img_buffer.save_with_format(&test_image_path, ImageFormat::Png).unwrap();
+        img_buffer
+            .save_with_format(&test_image_path, ImageFormat::Png)
+            .unwrap();
 
         let output = NamedTempFile::new().unwrap();
         let output_path = output.path().to_str().unwrap().to_string();
 
-        // Place image at top of page (y=0 in top-left coordinates)
-        // Should be converted to bottom of page in PDF coordinates
         let request = PdfExportRequest {
             page: PdfPageConfig {
                 width_mm: 100.0,
                 height_mm: 100.0,
+                background: Some("#ffffff".to_string()),
             },
             images: vec![PdfImageElement {
                 image_path: test_image_path,
                 x_mm: 0.0,
-                y_mm: 0.0,  // Top in design coordinates
+                y_mm: 0.0,
                 width_mm: 25.0,
                 height_mm: 25.0,
                 rotation_deg: 0.0,
@@ -304,7 +535,6 @@ mod tests {
         let result = export_pdf(&request);
         assert!(result.is_ok(), "Failed to export PDF: {:?}", result);
 
-        // Verify the PDF was created
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
     }
@@ -318,6 +548,7 @@ mod tests {
             page: PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
+                background: Some("#ffffff".to_string()),
             },
             images: vec![],
             output_path: output_path.clone(),
@@ -326,70 +557,28 @@ mod tests {
         let result = export_pdf(&request);
         assert!(result.is_ok(), "Failed to export A4 PDF: {:?}", result);
 
-        // Read and verify PDF dimensions
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
 
-        // Convert bytes to string to search for MediaBox
         let pdf_text = String::from_utf8_lossy(&pdf_bytes);
-
-        // A4 in points: 210mm = 595.28pt, 297mm = 841.89pt
-        // PDF uses points (1pt = 1/72 inch = 0.3528mm)
-        // 210mm / 0.3528mm = 595.28pt
-        // 297mm / 0.3528mm = 841.89pt
         assert!(pdf_text.contains("MediaBox"), "PDF should contain MediaBox");
 
-        // Check if the MediaBox contains values close to A4 dimensions
-        // The exact format might be "/MediaBox [0 0 595.28 841.89]" or similar
         let has_correct_width = pdf_text.contains("595.2") || pdf_text.contains("595.3");
         let has_correct_height = pdf_text.contains("841.8") || pdf_text.contains("841.9");
 
-        assert!(has_correct_width, "PDF width should be approximately 595.28pt for A4");
-        assert!(has_correct_height, "PDF height should be approximately 841.89pt for A4");
+        assert!(
+            has_correct_width,
+            "PDF width should be approximately 595.28pt for A4"
+        );
+        assert!(
+            has_correct_height,
+            "PDF height should be approximately 841.89pt for A4"
+        );
     }
 
     #[test]
-    fn test_centered_image_placement() {
-        use ::image::{ImageBuffer, ImageFormat, Rgb};
-
-        // Create a 100x100px test image
-        let img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(100, 100, Rgb([0, 128, 255]));
-        let test_image = NamedTempFile::with_suffix(".png").unwrap();
-        let test_image_path = test_image.path().to_str().unwrap().to_string();
-        img_buffer.save_with_format(&test_image_path, ImageFormat::Png).unwrap();
-
-        let output = NamedTempFile::new().unwrap();
-        let output_path = output.path().to_str().unwrap().to_string();
-
-        // Place a 50mm x 50mm image centered on A4 page
-        // A4 center: 105mm x 148.5mm
-        // Image top-left should be at: (105 - 25, 148.5 - 25) = (80, 123.5)
-        let request = PdfExportRequest {
-            page: PdfPageConfig {
-                width_mm: 210.0,
-                height_mm: 297.0,
-            },
-            images: vec![PdfImageElement {
-                image_path: test_image_path,
-                x_mm: 80.0,
-                y_mm: 123.5,
-                width_mm: 50.0,
-                height_mm: 50.0,
-                rotation_deg: 0.0,
-            }],
-            output_path: output_path.clone(),
-        };
-
-        let result = export_pdf(&request);
-        assert!(result.is_ok(), "Failed to export PDF with centered image: {:?}", result);
-
-        // Verify the PDF was created
-        let pdf_bytes = std::fs::read(&output_path).unwrap();
-        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
-        assert!(pdf_bytes.len() > 1000, "PDF seems too small");
-
-        // The image should be properly scaled and positioned
-        // We can't easily verify the exact position without parsing the PDF,
-        // but we can verify it was created successfully
+    fn test_parse_gradient_background_preset() {
+        let spec = parse_background("ocean-mist");
+        assert!(matches!(spec, PdfBackgroundSpec::LinearGradient { .. }));
     }
 }
