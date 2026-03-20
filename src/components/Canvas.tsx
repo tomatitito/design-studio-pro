@@ -51,6 +51,8 @@ export function Canvas() {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<Rect | null>(null);
+  const sheetSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const projectIdRef = useRef<string | null>(null);
   const storeApi = useCanvasStoreApi();
   const canvas = useCanvasStore((s) => s.canvas);
   const zoom = useUIStore((s) => s.zoom);
@@ -117,7 +119,10 @@ export function Canvas() {
       project = DEFAULT_PROJECT;
     }
     const { width, height } = project.settings;
-    sheetRef.current = createPageSheet(fabricCanvas, width, height);
+    const background = project.pages[0]?.backgroundColor ?? "#ffffff";
+    sheetRef.current = createPageSheet(fabricCanvas, width, height, background);
+    sheetSizeRef.current = { width, height };
+    projectIdRef.current = project.id;
     fitSheetInView(fabricCanvas, sheetRef.current);
 
     return () => {
@@ -154,8 +159,22 @@ export function Canvas() {
   useEffect(() => {
     if (!canvas || !currentProject || !sheetRef.current) return;
     const { width, height } = currentProject.settings;
-    updatePageSheet(canvas, sheetRef.current, width, height);
-    fitSheetInView(canvas, sheetRef.current);
+    const background = currentProject.pages[0]?.backgroundColor ?? "#ffffff";
+    const previousSize = sheetSizeRef.current;
+    const previousProjectId = projectIdRef.current;
+    const sizeChanged =
+      !previousSize ||
+      previousSize.width !== width ||
+      previousSize.height !== height;
+    const projectChanged = previousProjectId !== currentProject.id;
+
+    updatePageSheet(canvas, sheetRef.current, width, height, background);
+    sheetSizeRef.current = { width, height };
+    projectIdRef.current = currentProject.id;
+
+    if (sizeChanged || projectChanged) {
+      fitSheetInView(canvas, sheetRef.current);
+    }
   }, [canvas, currentProject]);
 
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {

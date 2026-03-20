@@ -1,5 +1,6 @@
 import { Rect, Shadow, Point, type Canvas as FabricCanvas } from "fabric";
 import { useUIStore } from "../stores";
+import { createPageBackgroundFill } from "../backgrounds";
 
 /** DPI used to convert mm to screen pixels. */
 export const DISPLAY_DPI = 72;
@@ -28,13 +29,14 @@ export function pxToMm(px: number): number {
 }
 
 /**
- * Create a white page sheet rectangle on the canvas.
- * The sheet is non-selectable and sent to the back.
+ * Create a page sheet rectangle on the canvas.
+ * The sheet is draggable, but remains behind page content.
  */
 export function createPageSheet(
   canvas: FabricCanvas,
   widthMm: number,
   heightMm: number,
+  background: string,
 ): Rect {
   const w = mmToPx(widthMm);
   const h = mmToPx(heightMm);
@@ -47,11 +49,15 @@ export function createPageSheet(
     height: h,
     left: (canvasW - w) / 2,
     top: (canvasH - h) / 2,
-    fill: "#ffffff",
+    fill: createPageBackgroundFill(background, w, h),
     strokeWidth: 0,
-    selectable: false,
-    evented: false,
-    hoverCursor: "default",
+    selectable: true,
+    evented: true,
+    hasControls: false,
+    lockScalingX: true,
+    lockScalingY: true,
+    lockRotation: true,
+    hoverCursor: "move",
     shadow: new Shadow({
       color: "rgba(0,0,0,0.3)",
       blur: 20,
@@ -62,6 +68,10 @@ export function createPageSheet(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (sheet as any).isPageSheet = true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (sheet as any).__pageDragLeft = sheet.left ?? 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (sheet as any).__pageDragTop = sheet.top ?? 0;
 
   canvas.add(sheet);
   canvas.sendObjectToBack(sheet);
@@ -78,19 +88,31 @@ export function updatePageSheet(
   sheet: Rect,
   widthMm: number,
   heightMm: number,
+  background: string,
 ): void {
   const w = mmToPx(widthMm);
   const h = mmToPx(heightMm);
+  const sizeChanged = sheet.width !== w || sheet.height !== h;
 
   const canvasW = canvas.getWidth();
   const canvasH = canvas.getHeight();
 
-  sheet.set({
+  const update: Record<string, unknown> = {
     width: w,
     height: h,
-    left: (canvasW - w) / 2,
-    top: (canvasH - h) / 2,
-  });
+    fill: createPageBackgroundFill(background, w, h),
+  };
+
+  if (sizeChanged) {
+    update.left = (canvasW - w) / 2;
+    update.top = (canvasH - h) / 2;
+  }
+
+  sheet.set(update);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (sheet as any).__pageDragLeft = sheet.left ?? 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (sheet as any).__pageDragTop = sheet.top ?? 0;
 
   sheet.setCoords();
   canvas.requestRenderAll();
@@ -166,10 +188,7 @@ export function fitSheetInView(canvas: FabricCanvas, sheet: Rect): void {
   const sheetH = sheet.height!;
 
   // Calculate zoom so the sheet fits within the viewport with padding
-  const zoomFit = Math.min(
-    (viewportW - padding * 2) / sheetW,
-    (viewportH - padding * 2) / sheetH,
-  );
+  const zoomFit = Math.min((viewportW - padding * 2) / sheetW, (viewportH - padding * 2) / sheetH);
 
   // Center of the sheet in canvas coordinates
   const sheetCenterX = sheet.left! + sheetW / 2;
