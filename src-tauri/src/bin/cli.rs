@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use design_studio_pro_lib::core::pdf::{self, PdfExportRequest, PdfImageElement, PdfPageConfig};
 use design_studio_pro_lib::core::project_io;
 use design_studio_pro_lib::models::{
-    Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position,
-    Project, ProjectSettings, Size,
+    Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position, Project,
+    ProjectSettings, Size,
 };
 use std::path::Path;
 use std::process;
@@ -17,6 +17,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// List available background presets
+    Backgrounds,
+
     /// Create a new .dsproj project file
     New {
         /// Project name
@@ -46,6 +49,10 @@ enum Commands {
         /// Output .dsproj file path
         #[arg(long, short)]
         output: String,
+
+        /// Page background preset, solid hex, or linear-gradient(...)
+        #[arg(long, default_value = "paper-white")]
+        background: String,
     },
 
     /// Open an existing project, optionally add images, and save
@@ -68,6 +75,10 @@ enum Commands {
         /// Output .dsproj path (defaults to overwriting input)
         #[arg(long, short)]
         output: Option<String>,
+
+        /// Page background preset, solid hex, or linear-gradient(...)
+        #[arg(long)]
+        background: Option<String>,
     },
 
     /// Export a project or ad-hoc images to PDF
@@ -94,7 +105,42 @@ enum Commands {
         /// Output PDF path
         #[arg(long, short)]
         output: String,
+
+        /// Page background preset, solid hex, or linear-gradient(...)
+        #[arg(long, default_value = "paper-white")]
+        background: String,
     },
+}
+
+const BACKGROUND_PRESETS: [(&str, &str); 8] = [
+    ("paper-white", "#ffffff"),
+    ("sandstone", "#f4e7d3"),
+    ("sage", "#dce8d8"),
+    ("midnight-ink", "#22304a"),
+    (
+        "sunset-bloom",
+        "linear-gradient(135deg, #f97316 0%, #ec4899 55%, #7c3aed 100%)",
+    ),
+    (
+        "ocean-mist",
+        "linear-gradient(135deg, #0f766e 0%, #38bdf8 100%)",
+    ),
+    (
+        "golden-hour",
+        "linear-gradient(160deg, #fff7cc 0%, #fbbf24 45%, #fb7185 100%)",
+    ),
+    (
+        "forest-haze",
+        "linear-gradient(145deg, #1f4d3a 0%, #7dd3a7 100%)",
+    ),
+];
+
+fn resolve_background_spec(input: &str) -> String {
+    BACKGROUND_PRESETS
+        .iter()
+        .find(|(name, _)| *name == input.trim())
+        .map(|(_, spec)| (*spec).to_string())
+        .unwrap_or_else(|| input.trim().to_string())
 }
 
 /// Parse a page size string into (width_mm, height_mm).
@@ -162,7 +208,10 @@ fn parse_size(s: &str) -> Result<(f64, f64), String> {
                 .map_err(|_| format!("Invalid height in size '{}'", s))?;
             Ok((w, h))
         }
-        _ => Err(format!("Invalid size '{}'. Use W,H or W (e.g. 50,80 or 100)", s)),
+        _ => Err(format!(
+            "Invalid size '{}'. Use W,H or W (e.g. 50,80 or 100)",
+            s
+        )),
     }
 }
 
@@ -198,11 +247,7 @@ fn resolve_image_size(explicit: Option<&String>, image_path: &str) -> Result<(f6
 }
 
 /// Build a PdfImageElement from image path, position, and size.
-fn build_pdf_image(
-    image_path: &str,
-    pos: (f64, f64),
-    size: (f64, f64),
-) -> PdfImageElement {
+fn build_pdf_image(image_path: &str, pos: (f64, f64), size: (f64, f64)) -> PdfImageElement {
     PdfImageElement {
         image_path: image_path.to_string(),
         x_mm: pos.0,
@@ -214,12 +259,7 @@ fn build_pdf_image(
 }
 
 /// Build an Element model for a project image.
-fn build_element(
-    index: usize,
-    image_path: &str,
-    pos: (f64, f64),
-    size: (f64, f64),
-) -> Element {
+fn build_element(index: usize, image_path: &str, pos: (f64, f64), size: (f64, f64)) -> Element {
     Element {
         id: format!("elem-{}", uuid::Uuid::new_v4()),
         element_type: ElementType::Image {
@@ -230,10 +270,7 @@ fn build_element(
                 .unwrap_or("image")
                 .to_string(),
         },
-        position: Position {
-            x: pos.0,
-            y: pos.1,
-        },
+        position: Position { x: pos.0, y: pos.1 },
         size: Size {
             width: size.0,
             height: size.1,
@@ -254,9 +291,7 @@ fn build_asset(image_path: &str) -> Asset {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let file_size = std::fs::metadata(image_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(image_path).map(|m| m.len()).unwrap_or(0);
     let dims = image::image_dimensions(image_path).ok();
     let ext = path
         .extension()
@@ -309,6 +344,7 @@ fn cmd_new(
     positions: Vec<String>,
     image_sizes: Vec<String>,
     output: String,
+    background: String,
 ) -> Result<(), String> {
     let (w, h) = parse_page_size(&size)?;
     let orient = parse_orientation(&orientation)?;
@@ -320,6 +356,7 @@ fn cmd_new(
 
     let mut elements = Vec::new();
     let mut assets = Vec::new();
+    let background = resolve_background_spec(&background);
 
     for (i, img_path) in add_image.iter().enumerate() {
         if !Path::new(img_path).exists() {
@@ -346,7 +383,7 @@ fn cmd_new(
             elements,
             width: page_w,
             height: page_h,
-            background_color: "#FFFFFF".to_string(),
+            background_color: background,
             order: 0,
         }],
         created_at: now.clone(),
@@ -370,19 +407,20 @@ fn cmd_open(
     positions: Vec<String>,
     image_sizes: Vec<String>,
     output: Option<String>,
+    background: Option<String>,
 ) -> Result<(), String> {
-    let extract_dir = tempfile::tempdir()
-        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let extract_dir =
+        tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-    let loaded = project_io::load_project(
-        &project_path,
-        extract_dir.path().to_str().unwrap(),
-    )?;
+    let loaded = project_io::load_project(&project_path, extract_dir.path().to_str().unwrap())?;
 
     let mut project = loaded.manifest.project;
     let mut assets: Vec<Asset> = loaded.manifest.assets;
 
     if let Some(page) = project.pages.first_mut() {
+        if let Some(background) = background {
+            page.background_color = resolve_background_spec(&background);
+        }
         let base_index = page.elements.len();
         for (i, img_path) in add_image.iter().enumerate() {
             if !Path::new(img_path).exists() {
@@ -415,16 +453,15 @@ fn cmd_export_pdf(
     positions: Vec<String>,
     image_sizes: Vec<String>,
     output: String,
+    background: String,
 ) -> Result<(), String> {
+    let background = resolve_background_spec(&background);
     if let Some(proj_path) = project {
         // Project mode: load .dsproj and export
-        let extract_dir = tempfile::tempdir()
-            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        let extract_dir =
+            tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-        let loaded = project_io::load_project(
-            &proj_path,
-            extract_dir.path().to_str().unwrap(),
-        )?;
+        let loaded = project_io::load_project(&proj_path, extract_dir.path().to_str().unwrap())?;
 
         let proj = &loaded.manifest.project;
         let page = proj.pages.first().ok_or("Project has no pages")?;
@@ -440,12 +477,8 @@ fn cmd_export_pdf(
                         .assets
                         .iter()
                         .find(|a| {
-                            Path::new(&a.file_path)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                == Path::new(src)
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
+                            Path::new(&a.file_path).file_name().and_then(|n| n.to_str())
+                                == Path::new(src).file_name().and_then(|n| n.to_str())
                         })
                         .map(|a| a.file_path.clone())
                         .unwrap_or_else(|| src.clone());
@@ -468,6 +501,7 @@ fn cmd_export_pdf(
             page: PdfPageConfig {
                 width_mm: page.width,
                 height_mm: page.height,
+                background: Some(page.background_color.clone()),
             },
             images: pdf_images,
             output_path: output.clone(),
@@ -498,6 +532,7 @@ fn cmd_export_pdf(
             page: PdfPageConfig {
                 width_mm: w,
                 height_mm: h,
+                background: Some(background),
             },
             images: pdf_images,
             output_path: output.clone(),
@@ -514,6 +549,12 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
+        Commands::Backgrounds => {
+            for (name, spec) in BACKGROUND_PRESETS {
+                println!("{name}\t{spec}");
+            }
+            Ok(())
+        }
         Commands::New {
             name,
             size,
@@ -522,7 +563,17 @@ fn main() {
             position,
             image_size,
             output,
-        } => cmd_new(name, size, orientation, add_image, position, image_size, output),
+            background,
+        } => cmd_new(
+            name,
+            size,
+            orientation,
+            add_image,
+            position,
+            image_size,
+            output,
+            background,
+        ),
 
         Commands::Open {
             project,
@@ -530,7 +581,8 @@ fn main() {
             position,
             image_size,
             output,
-        } => cmd_open(project, add_image, position, image_size, output),
+            background,
+        } => cmd_open(project, add_image, position, image_size, output, background),
 
         Commands::ExportPdf {
             project,
@@ -539,7 +591,10 @@ fn main() {
             position,
             image_size,
             output,
-        } => cmd_export_pdf(project, page_size, image, position, image_size, output),
+            background,
+        } => cmd_export_pdf(
+            project, page_size, image, position, image_size, output, background,
+        ),
     };
 
     if let Err(e) = result {
