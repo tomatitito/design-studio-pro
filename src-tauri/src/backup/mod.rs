@@ -86,7 +86,10 @@ impl BackupManager {
         let timestamp_str = timestamp.format("%Y%m%d_%H%M%S_%6f").to_string();
         let backup_filename = format!("backup_{}_{}.json", project_data.id, timestamp_str);
         let backup_path = self.config.backup_dir.join(&backup_filename);
-        let metadata_path = self.config.backup_dir.join(format!("{}.meta", backup_filename));
+        let metadata_path = self
+            .config
+            .backup_dir
+            .join(format!("{}.meta", backup_filename));
 
         // Serialize project data
         let json_data = serde_json::to_string_pretty(project_data)
@@ -176,15 +179,12 @@ impl BackupManager {
                     .and_then(|s| s.strip_suffix(".json"))
                 {
                     // Parse as naive datetime first, then convert to UTC
-                    if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(
-                        timestamp_str,
-                        "%Y%m%d_%H%M%S_%6f",
-                    ) {
+                    if let Ok(naive_dt) =
+                        chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y%m%d_%H%M%S_%6f")
+                    {
                         let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
-                        let metadata_path = self
-                            .config
-                            .backup_dir
-                            .join(format!("{}.meta", filename));
+                        let metadata_path =
+                            self.config.backup_dir.join(format!("{}.meta", filename));
 
                         // Try to read metadata
                         if let Ok(metadata_content) = fs::read_to_string(&metadata_path) {

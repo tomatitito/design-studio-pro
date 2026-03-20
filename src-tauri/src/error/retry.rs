@@ -52,7 +52,8 @@ where
                         delay
                     );
                     tokio::time::sleep(delay).await;
-                    delay = Duration::from_secs_f64(delay.as_secs_f64() * config.backoff_multiplier);
+                    delay =
+                        Duration::from_secs_f64(delay.as_secs_f64() * config.backoff_multiplier);
                 } else {
                     log::warn!("All {} retry attempts exhausted", config.max_retries + 1);
                 }

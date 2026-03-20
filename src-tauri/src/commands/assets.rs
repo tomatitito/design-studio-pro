@@ -313,8 +313,7 @@ mod tests {
         let img_path = create_test_image(&temp_dir, "photo.png", 100, 100);
 
         let store = AssetStore::new();
-        let asset =
-            import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
+        let asset = import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
 
         assert_eq!(asset.mime_type, "image/png");
     }
@@ -325,8 +324,7 @@ mod tests {
         let img_path = create_test_image(&temp_dir, "photo.png", 800, 600);
 
         let store = AssetStore::new();
-        let asset =
-            import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
+        let asset = import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
 
         assert!(asset.dimensions.is_some());
         let dims = asset.dimensions.unwrap();
@@ -341,13 +339,9 @@ mod tests {
         let project_dir = temp_dir.path().to_str().unwrap().to_string();
 
         let store = AssetStore::new();
-        let asset = import_asset_internal(
-            "photo.png".to_string(),
-            img_path,
-            Some(project_dir),
-            &store,
-        )
-        .unwrap();
+        let asset =
+            import_asset_internal("photo.png".to_string(), img_path, Some(project_dir), &store)
+                .unwrap();
 
         assert!(asset.thumbnail_path.is_some());
         let thumb_path = asset.thumbnail_path.unwrap();
@@ -361,8 +355,7 @@ mod tests {
         let img_path = create_test_image(&temp_dir, "photo.png", 400, 300);
 
         let store = AssetStore::new();
-        let asset =
-            import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
+        let asset = import_asset_internal("photo.png".to_string(), img_path, None, &store).unwrap();
 
         assert!(asset.thumbnail_path.is_none());
     }
@@ -417,8 +410,7 @@ mod tests {
         let file_path = create_test_file(&temp_dir, "test.txt", b"content");
 
         let store = AssetStore::new();
-        let asset =
-            import_asset_internal("test.txt".to_string(), file_path, None, &store).unwrap();
+        let asset = import_asset_internal("test.txt".to_string(), file_path, None, &store).unwrap();
 
         let result = delete_asset_internal(asset.id, &store);
         assert!(result.is_ok());
@@ -443,8 +435,7 @@ mod tests {
         let file2 = create_test_file(&temp_dir, "file2.txt", b"content2");
 
         let store = AssetStore::new();
-        let asset1 =
-            import_asset_internal("file1.txt".to_string(), file1, None, &store).unwrap();
+        let asset1 = import_asset_internal("file1.txt".to_string(), file1, None, &store).unwrap();
         import_asset_internal("file2.txt".to_string(), file2, None, &store).unwrap();
 
         delete_asset_internal(asset1.id, &store).unwrap();

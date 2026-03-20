@@ -41,11 +41,7 @@ pub struct ProjectManifest {
 ///     +-- asset1_thumb.png
 ///     +-- asset2_thumb.png
 /// ```
-pub fn save_project(
-    output_path: &str,
-    project: &Project,
-    assets: &[Asset],
-) -> Result<(), String> {
+pub fn save_project(output_path: &str, project: &Project, assets: &[Asset]) -> Result<(), String> {
     let file = fs::File::create(output_path)
         .map_err(|e| format!("Failed to create file '{}': {}", output_path, e))?;
 
@@ -99,10 +95,9 @@ pub fn save_project(
 
                 let archive_path = format!("thumbnails/{}", thumb_name);
 
-                zip.start_file(&archive_path, options)
-                    .map_err(|e| {
-                        format!("Failed to write thumbnail entry '{}': {}", archive_path, e)
-                    })?;
+                zip.start_file(&archive_path, options).map_err(|e| {
+                    format!("Failed to write thumbnail entry '{}': {}", archive_path, e)
+                })?;
 
                 let data = fs::read(thumb_path)
                     .map_err(|e| format!("Failed to read thumbnail '{}': {}", thumb_path, e))?;
@@ -134,10 +129,7 @@ pub struct LoadedProject {
 /// Extracts assets and thumbnails into subdirectories under `extract_dir`.
 /// The asset paths in the returned manifest are updated to point to the
 /// extracted files.
-pub fn load_project(
-    archive_path: &str,
-    extract_dir: &str,
-) -> Result<LoadedProject, String> {
+pub fn load_project(archive_path: &str, extract_dir: &str) -> Result<LoadedProject, String> {
     let file = fs::File::open(archive_path)
         .map_err(|e| format!("Failed to open archive '{}': {}", archive_path, e))?;
 
@@ -154,9 +146,9 @@ pub fn load_project(
 
     // Read manifest
     let manifest: ProjectManifest = {
-        let mut manifest_file = archive.by_name("manifest.json").map_err(|e| {
-            format!("Failed to find manifest.json in archive: {}", e)
-        })?;
+        let mut manifest_file = archive
+            .by_name("manifest.json")
+            .map_err(|e| format!("Failed to find manifest.json in archive: {}", e))?;
 
         let mut manifest_content = String::new();
         manifest_file
@@ -186,7 +178,9 @@ pub fn load_project(
             }
             assets_dir.join(file_name)
         } else if entry_name.starts_with("thumbnails/") {
-            let file_name = entry_name.strip_prefix("thumbnails/").unwrap_or(&entry_name);
+            let file_name = entry_name
+                .strip_prefix("thumbnails/")
+                .unwrap_or(&entry_name);
             if file_name.is_empty() {
                 continue;
             }
@@ -239,9 +233,7 @@ pub fn load_project(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{
-        Dimensions, MeasurementUnit, Orientation, Page, ProjectSettings,
-    };
+    use crate::models::{Dimensions, MeasurementUnit, Orientation, Page, ProjectSettings};
     use image::{ImageBuffer, Rgba};
     use tempfile::TempDir;
 
@@ -270,10 +262,9 @@ mod tests {
     }
 
     fn create_test_image(dir: &TempDir, name: &str, width: u32, height: u32) -> String {
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_fn(width, height, |x, y| {
-                Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255])
-            });
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(width, height, |x, y| {
+            Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255])
+        });
         let path = dir.path().join(name);
         img.save(&path).unwrap();
         path.to_str().unwrap().to_string()
@@ -304,11 +295,7 @@ mod tests {
         let output_path = temp_dir.path().join("test.dsproj");
         let project = create_test_project();
 
-        let result = save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[],
-        );
+        let result = save_project(output_path.to_str().unwrap(), &project, &[]);
 
         assert!(result.is_ok());
         assert!(output_path.exists());
@@ -370,12 +357,7 @@ mod tests {
         let project = create_test_project();
         let asset = create_test_asset(&temp_dir);
 
-        save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[asset],
-        )
-        .unwrap();
+        save_project(output_path.to_str().unwrap(), &project, &[asset]).unwrap();
 
         let file = fs::File::open(&output_path).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -402,11 +384,7 @@ mod tests {
             created_at: "2026-02-24T10:00:00Z".to_string(),
         };
 
-        let result = save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[missing_asset],
-        );
+        let result = save_project(output_path.to_str().unwrap(), &project, &[missing_asset]);
 
         // Should succeed - missing files are skipped
         assert!(result.is_ok());
@@ -422,11 +400,8 @@ mod tests {
         let project = create_test_project();
         save_project(output_path.to_str().unwrap(), &project, &[]).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.manifest.version, FORMAT_VERSION);
         assert_eq!(loaded.manifest.project.id, "proj-test-001");
@@ -443,11 +418,8 @@ mod tests {
         let project = create_test_project();
         save_project(output_path.to_str().unwrap(), &project, &[]).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.manifest.project.id, project.id);
         assert_eq!(loaded.manifest.project.name, project.name);
@@ -466,18 +438,10 @@ mod tests {
         let project = create_test_project();
         let asset = create_test_asset(&temp_dir);
 
-        save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[asset.clone()],
-        )
-        .unwrap();
+        save_project(output_path.to_str().unwrap(), &project, &[asset.clone()]).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.manifest.assets.len(), 1);
         let loaded_asset = &loaded.manifest.assets[0];
@@ -496,18 +460,10 @@ mod tests {
         let project = create_test_project();
         let asset = create_test_asset(&temp_dir);
 
-        save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[asset],
-        )
-        .unwrap();
+        save_project(output_path.to_str().unwrap(), &project, &[asset]).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         // Verify asset file was extracted
         let loaded_asset = &loaded.manifest.assets[0];
@@ -527,18 +483,10 @@ mod tests {
         let project = create_test_project();
         let asset = create_test_asset(&temp_dir);
 
-        save_project(
-            output_path.to_str().unwrap(),
-            &project,
-            &[asset.clone()],
-        )
-        .unwrap();
+        save_project(output_path.to_str().unwrap(), &project, &[asset.clone()]).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         let loaded_asset = &loaded.manifest.assets[0];
         // Paths should be updated to point to extracted location
@@ -555,11 +503,7 @@ mod tests {
         let project = create_test_project();
         save_project(output_path.to_str().unwrap(), &project, &[]).unwrap();
 
-        load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         assert!(extract_dir.join("assets").exists());
         assert!(extract_dir.join(".thumbnails").exists());
@@ -604,7 +548,10 @@ mod tests {
                 thumbnail_path: None,
                 file_size: 1000,
                 mime_type: "image/png".to_string(),
-                dimensions: Some(Dimensions { width: 200, height: 200 }),
+                dimensions: Some(Dimensions {
+                    width: 200,
+                    height: 200,
+                }),
                 created_at: "2026-02-24T10:00:00Z".to_string(),
             },
             Asset {
@@ -614,7 +561,10 @@ mod tests {
                 thumbnail_path: None,
                 file_size: 2000,
                 mime_type: "image/png".to_string(),
-                dimensions: Some(Dimensions { width: 300, height: 300 }),
+                dimensions: Some(Dimensions {
+                    width: 300,
+                    height: 300,
+                }),
                 created_at: "2026-02-24T10:00:00Z".to_string(),
             },
         ];
@@ -646,7 +596,10 @@ mod tests {
                 thumbnail_path: None,
                 file_size: 500,
                 mime_type: "image/png".to_string(),
-                dimensions: Some(Dimensions { width: 100, height: 100 }),
+                dimensions: Some(Dimensions {
+                    width: 100,
+                    height: 100,
+                }),
                 created_at: "2026-02-24T10:00:00Z".to_string(),
             },
             Asset {
@@ -656,18 +609,18 @@ mod tests {
                 thumbnail_path: None,
                 file_size: 800,
                 mime_type: "image/png".to_string(),
-                dimensions: Some(Dimensions { width: 200, height: 200 }),
+                dimensions: Some(Dimensions {
+                    width: 200,
+                    height: 200,
+                }),
                 created_at: "2026-02-24T10:00:00Z".to_string(),
             },
         ];
 
         save_project(output_path.to_str().unwrap(), &project, &assets).unwrap();
 
-        let loaded = load_project(
-            output_path.to_str().unwrap(),
-            extract_dir.to_str().unwrap(),
-        )
-        .unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.manifest.assets.len(), 2);
         assert!(Path::new(&loaded.manifest.assets[0].file_path).exists());

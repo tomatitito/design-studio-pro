@@ -23,8 +23,8 @@ pub fn create_directory(path: String) -> Result<(), String> {
 /// Lists all entries in a directory.
 #[tauri::command]
 pub fn list_directory(path: String) -> Result<Vec<String>, String> {
-    let entries = fs::read_dir(&path)
-        .map_err(|e| format!("Failed to read directory {}: {}", path, e))?;
+    let entries =
+        fs::read_dir(&path).map_err(|e| format!("Failed to read directory {}: {}", path, e))?;
 
     let mut result = Vec::new();
     for entry in entries {
@@ -99,10 +99,7 @@ mod tests {
 
     #[test]
     fn write_text_file_returns_error_for_invalid_path() {
-        let result = write_text_file(
-            "/invalid/path/file.txt".to_string(),
-            "content".to_string(),
-        );
+        let result = write_text_file("/invalid/path/file.txt".to_string(), "content".to_string());
         assert!(result.is_err());
     }
 
@@ -120,7 +117,11 @@ mod tests {
     #[test]
     fn create_directory_creates_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path().join("parent").join("child").join("grandchild");
+        let dir_path = temp_dir
+            .path()
+            .join("parent")
+            .join("child")
+            .join("grandchild");
 
         let result = create_directory(dir_path.to_str().unwrap().to_string());
         assert!(result.is_ok());
@@ -178,11 +179,7 @@ mod tests {
 
         // Write file
         let file_path = dir_path.join("test.txt");
-        write_text_file(
-            file_path.to_str().unwrap().to_string(),
-            "Hello".to_string(),
-        )
-        .unwrap();
+        write_text_file(file_path.to_str().unwrap().to_string(), "Hello".to_string()).unwrap();
 
         // Read file
         let content = read_text_file(file_path.to_str().unwrap().to_string()).unwrap();

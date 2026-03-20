@@ -29,7 +29,10 @@ mod tests {
 
         // File errors have context-specific strategies
         let file_not_found = AppError::file("Config file not found");
-        matches!(file_not_found.recovery_strategy(), RecoveryStrategy::Fallback { .. });
+        matches!(
+            file_not_found.recovery_strategy(),
+            RecoveryStrategy::Fallback { .. }
+        );
     }
 
     #[tokio::test]

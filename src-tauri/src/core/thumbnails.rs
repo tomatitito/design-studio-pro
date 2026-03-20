@@ -132,12 +132,7 @@ mod tests {
     /// Creates a test PNG image with the given dimensions.
     fn create_test_image(dir: &TempDir, name: &str, width: u32, height: u32) -> String {
         let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(width, height, |x, y| {
-            Rgba([
-                (x % 256) as u8,
-                (y % 256) as u8,
-                128,
-                255,
-            ])
+            Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255])
         });
         let path = dir.path().join(name);
         img.save(&path).unwrap();
@@ -147,9 +142,8 @@ mod tests {
     /// Creates a test JPEG image with the given dimensions.
     fn create_test_jpeg(dir: &TempDir, name: &str, width: u32, height: u32) -> String {
         use image::Rgb;
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(width, height, |_, _| {
-            Rgb([200, 100, 50])
-        });
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_fn(width, height, |_, _| Rgb([200, 100, 50]));
         let path = dir.path().join(name);
         img.save(&path).unwrap();
         path.to_str().unwrap().to_string()

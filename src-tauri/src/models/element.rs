@@ -28,7 +28,11 @@ pub enum ShapeKind {
 
 /// Type of element with associated data.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "lowercase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ElementType {
     Image {
         src: String,
@@ -80,7 +84,10 @@ mod tests {
 
     #[test]
     fn size_can_be_created() {
-        let size = Size { width: 100.0, height: 50.0 };
+        let size = Size {
+            width: 100.0,
+            height: 50.0,
+        };
         assert_eq!(size.width, 100.0);
         assert_eq!(size.height, 50.0);
     }
@@ -94,7 +101,10 @@ mod tests {
                 alt: "Test image".to_string(),
             },
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 100.0, height: 100.0 },
+            size: Size {
+                width: 100.0,
+                height: 100.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 0,
@@ -117,7 +127,10 @@ mod tests {
                 color: "#000000".to_string(),
             },
             position: Position { x: 10.0, y: 10.0 },
-            size: Size { width: 200.0, height: 50.0 },
+            size: Size {
+                width: 200.0,
+                height: 50.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 1,
@@ -144,7 +157,10 @@ mod tests {
                 stroke_width: 2.0,
             },
             position: Position { x: 50.0, y: 50.0 },
-            size: Size { width: 100.0, height: 100.0 },
+            size: Size {
+                width: 100.0,
+                height: 100.0,
+            },
             rotation: 45.0,
             opacity: 0.8,
             z_index: 2,
@@ -168,7 +184,10 @@ mod tests {
                 color: "#000000".to_string(),
             },
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 50.0, height: 20.0 },
+            size: Size {
+                width: 50.0,
+                height: 20.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 0,
@@ -182,7 +201,10 @@ mod tests {
                 children: vec![child],
             },
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 200.0, height: 200.0 },
+            size: Size {
+                width: 200.0,
+                height: 200.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 0,
@@ -209,7 +231,10 @@ mod tests {
                 color: "#000000".to_string(),
             },
             position: Position { x: 10.0, y: 20.0 },
-            size: Size { width: 100.0, height: 50.0 },
+            size: Size {
+                width: 100.0,
+                height: 50.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 0,

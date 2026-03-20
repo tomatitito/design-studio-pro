@@ -1,7 +1,7 @@
 //! Project model and settings.
 
-use serde::{Deserialize, Serialize};
 use super::page::Page;
+use serde::{Deserialize, Serialize};
 
 /// Measurement unit for project dimensions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

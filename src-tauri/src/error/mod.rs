@@ -131,14 +131,22 @@ impl fmt::Display for AppError {
 impl std::error::Error for AppError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            AppError::User(e) => e.source.as_ref().map(|s| s.as_ref() as &dyn std::error::Error),
-            AppError::System(e) => {
-                e.source.as_ref().map(|s| s.as_ref() as &dyn std::error::Error)
-            }
-            AppError::Network(e) => {
-                e.source.as_ref().map(|s| s.as_ref() as &dyn std::error::Error)
-            }
-            AppError::File(e) => e.source.as_ref().map(|s| s.as_ref() as &dyn std::error::Error),
+            AppError::User(e) => e
+                .source
+                .as_ref()
+                .map(|s| s.as_ref() as &dyn std::error::Error),
+            AppError::System(e) => e
+                .source
+                .as_ref()
+                .map(|s| s.as_ref() as &dyn std::error::Error),
+            AppError::Network(e) => e
+                .source
+                .as_ref()
+                .map(|s| s.as_ref() as &dyn std::error::Error),
+            AppError::File(e) => e
+                .source
+                .as_ref()
+                .map(|s| s.as_ref() as &dyn std::error::Error),
         }
     }
 }

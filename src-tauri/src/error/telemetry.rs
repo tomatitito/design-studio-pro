@@ -176,7 +176,15 @@ mod tests {
         assert!((summary.get(&ErrorCategory::User).unwrap().frequency_percent - 25.0).abs() < 0.01);
 
         assert_eq!(summary.get(&ErrorCategory::System).unwrap().count, 2);
-        assert!((summary.get(&ErrorCategory::System).unwrap().frequency_percent - 50.0).abs() < 0.01);
+        assert!(
+            (summary
+                .get(&ErrorCategory::System)
+                .unwrap()
+                .frequency_percent
+                - 50.0)
+                .abs()
+                < 0.01
+        );
 
         assert_eq!(summary.get(&ErrorCategory::File).unwrap().count, 1);
         assert!((summary.get(&ErrorCategory::File).unwrap().frequency_percent - 25.0).abs() < 0.01);

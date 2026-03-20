@@ -1,7 +1,7 @@
 //! Page model for design canvases.
 
-use serde::{Deserialize, Serialize};
 use super::element::Element;
+use serde::{Deserialize, Serialize};
 
 /// A page within a design project.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -50,7 +50,10 @@ mod tests {
                 color: "#000000".to_string(),
             },
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 100.0, height: 50.0 },
+            size: Size {
+                width: 100.0,
+                height: 50.0,
+            },
             rotation: 0.0,
             opacity: 1.0,
             z_index: 0,
