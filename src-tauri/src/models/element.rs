@@ -37,6 +37,12 @@ pub enum ElementType {
     Image {
         src: String,
         alt: String,
+        #[serde(default)]
+        border_style: Option<String>,
+        #[serde(default)]
+        border_color: Option<String>,
+        #[serde(default)]
+        border_width: Option<f64>,
     },
     Text {
         content: String,
@@ -99,6 +105,9 @@ mod tests {
             element_type: ElementType::Image {
                 src: "/path/to/image.png".to_string(),
                 alt: "Test image".to_string(),
+                border_style: None,
+                border_color: None,
+                border_width: None,
             },
             position: Position { x: 0.0, y: 0.0 },
             size: Size {

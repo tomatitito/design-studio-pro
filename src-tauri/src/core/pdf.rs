@@ -3,7 +3,7 @@
 //! This module provides the core logic for exporting designs to PDF format.
 //! It handles page setup, image positioning, and coordinate transformations.
 
-use ::image::{ImageBuffer, Rgb, RgbImage};
+use ::image::{ImageBuffer, Rgb as ImgRgb, RgbImage};
 use printpdf::*;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -29,6 +29,12 @@ pub struct PdfImageElement {
     pub width_mm: f64,
     pub height_mm: f64,
     pub rotation_deg: f64,
+    #[serde(default)]
+    pub border_style: Option<String>,
+    #[serde(default)]
+    pub border_color: Option<String>,
+    #[serde(default)]
+    pub border_width: Option<f64>,
 }
 
 /// Request structure for PDF export.
@@ -209,7 +215,7 @@ fn sample_gradient_color(stops: &[GradientStop], position: f64) -> [u8; 3] {
 fn render_background_image(spec: &PdfBackgroundSpec, width: u32, height: u32) -> RgbImage {
     match spec {
         PdfBackgroundSpec::Solid([r, g, b]) => {
-            ImageBuffer::from_pixel(width, height, Rgb([*r, *g, *b]))
+            ImageBuffer::from_pixel(width, height, ImgRgb([*r, *g, *b]))
         }
         PdfBackgroundSpec::LinearGradient { angle_deg, stops } => {
             let mut image = RgbImage::new(width, height);
@@ -224,7 +230,7 @@ fn render_background_image(spec: &PdfBackgroundSpec, width: u32, height: u32) ->
                 let projected =
                     ((x as f64 - center_x) * dx + (y as f64 - center_y) * dy) / (extent * 2.0);
                 let color = sample_gradient_color(stops, (0.5 + projected).clamp(0.0, 1.0));
-                *pixel = Rgb(color);
+                *pixel = ImgRgb(color);
             }
 
             image
@@ -274,6 +280,69 @@ fn add_background_to_layer(layer: &PdfLayerReference, page: &PdfPageConfig) {
             ..Default::default()
         },
     );
+}
+
+fn border_preset_defaults(style: &str) -> Option<(&'static str, f64)> {
+    match style {
+        "custom" => Some(("#000000", 1.0)),
+        "matte-frame" => Some(("#f5f1e8", 12.0)),
+        "gallery-frame" => Some(("#1f2937", 6.0)),
+        "ornate-gold" => Some(("#d4af37", 8.0)),
+        "walnut-frame" => Some(("#5c3a21", 10.0)),
+        _ => None,
+    }
+}
+
+fn resolve_border_for_pdf(image: &PdfImageElement) -> Option<([u8; 3], f64)> {
+    let preset = image
+        .border_style
+        .as_deref()
+        .and_then(border_preset_defaults);
+    let width_mm = image.border_width.or_else(|| preset.map(|(_, w)| w))?;
+    if !width_mm.is_finite() || width_mm <= 0.0 {
+        return None;
+    }
+
+    let color = image
+        .border_color
+        .as_deref()
+        .and_then(parse_hex_color)
+        .or_else(|| preset.and_then(|(color, _)| parse_hex_color(color)))
+        .unwrap_or([0, 0, 0]);
+
+    Some((color, width_mm))
+}
+
+fn draw_image_border(
+    layer: &PdfLayerReference,
+    page: &PdfPageConfig,
+    image: &PdfImageElement,
+    border_color: [u8; 3],
+    border_width_mm: f64,
+) {
+    const MM_TO_PT: f64 = 72.0 / 25.4;
+    let y_pdf = page.height_mm - image.y_mm - image.height_mm;
+    let x = image.x_mm as f32;
+    let y = y_pdf as f32;
+    let width = image.width_mm as f32;
+    let height = image.height_mm as f32;
+
+    layer.set_outline_color(Color::Rgb(Rgb::new(
+        border_color[0] as f32 / 255.0,
+        border_color[1] as f32 / 255.0,
+        border_color[2] as f32 / 255.0,
+        None,
+    )));
+    layer.set_outline_thickness((border_width_mm * MM_TO_PT) as f32);
+    layer.add_line(Line {
+        points: vec![
+            (Point::new(Mm(x), Mm(y)), false),
+            (Point::new(Mm(x + width), Mm(y)), false),
+            (Point::new(Mm(x + width), Mm(y + height)), false),
+            (Point::new(Mm(x), Mm(y + height)), false),
+        ],
+        is_closed: true,
+    });
 }
 
 /// Export a design to PDF format.
@@ -359,6 +428,15 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
                     ..Default::default()
                 },
             );
+            if let Some((border_color, border_width_mm)) = resolve_border_for_pdf(img_elem) {
+                draw_image_border(
+                    &current_layer,
+                    &request.page,
+                    img_elem,
+                    border_color,
+                    border_width_mm,
+                );
+            }
         } else {
             let img = ::image::ImageReader::new(Cursor::new(&image_bytes))
                 .with_guessed_format()
@@ -411,6 +489,15 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
                     ..Default::default()
                 },
             );
+            if let Some((border_color, border_width_mm)) = resolve_border_for_pdf(img_elem) {
+                draw_image_border(
+                    &current_layer,
+                    &request.page,
+                    img_elem,
+                    border_color,
+                    border_width_mm,
+                );
+            }
         }
     }
 
@@ -484,6 +571,9 @@ mod tests {
                 width_mm: 50.0,
                 height_mm: 50.0,
                 rotation_deg: 0.0,
+                border_style: None,
+                border_color: None,
+                border_width: None,
             }],
             output_path: output_path.clone(),
         };
@@ -528,6 +618,9 @@ mod tests {
                 width_mm: 25.0,
                 height_mm: 25.0,
                 rotation_deg: 0.0,
+                border_style: None,
+                border_color: None,
+                border_width: None,
             }],
             output_path: output_path.clone(),
         };
@@ -580,5 +673,24 @@ mod tests {
     fn test_parse_gradient_background_preset() {
         let spec = parse_background("ocean-mist");
         assert!(matches!(spec, PdfBackgroundSpec::LinearGradient { .. }));
+    }
+
+    #[test]
+    fn test_resolve_border_from_style_defaults() {
+        let image = PdfImageElement {
+            image_path: "/tmp/photo.png".to_string(),
+            x_mm: 0.0,
+            y_mm: 0.0,
+            width_mm: 10.0,
+            height_mm: 10.0,
+            rotation_deg: 0.0,
+            border_style: Some("walnut-frame".to_string()),
+            border_color: None,
+            border_width: None,
+        };
+
+        let resolved = resolve_border_for_pdf(&image).expect("expected border");
+        assert_eq!(resolved.0, [92, 58, 33]);
+        assert_eq!(resolved.1, 10.0);
     }
 }

@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { Canvas as FabricCanvas } from "fabric";
+import type { Canvas as FabricCanvas, FabricObject } from "fabric";
 import { FabricImage } from "fabric";
 import { pxToMm } from "./sheet";
+import { getElementId } from "./handlers";
+import { resolveImageBorderStyle, type ImageBorderStyleId } from "./imageBorders";
 import { useProjectStore } from "../stores";
+import type { ImageElement } from "../types";
 
 /** Configuration for a PDF page. */
 export interface PdfPageConfig {
@@ -20,6 +23,9 @@ export interface PdfImageElement {
   widthMm: number;
   heightMm: number;
   rotationDeg: number;
+  borderStyle?: string;
+  borderColor?: string;
+  borderWidth?: number;
 }
 
 /** Request structure for PDF export. */
@@ -42,6 +48,12 @@ export function collectExportData(
   background?: string,
 ): Omit<PdfExportRequest, "outputPath"> {
   const objects = canvas.getObjects();
+  const currentPage = useProjectStore.getState().currentProject?.pages[0];
+  const imageElementsById = new Map<string, ImageElement>(
+    (currentPage?.elements ?? [])
+      .filter((element): element is ImageElement => element.elementType === "image")
+      .map((element) => [element.id, element]),
+  );
 
   // The page sheet is placed at the centre of the canvas.  All image positions
   // are in the same canvas-pixel coordinate space, so we need to express them
@@ -72,6 +84,8 @@ export function collectExportData(
     const heightPx = (obj.height ?? 0) * (obj.scaleY ?? 1);
     const left = (obj.left ?? 0) - widthPx / 2 - sheetLeftEdge;
     const top = (obj.top ?? 0) - heightPx / 2 - sheetTopEdge;
+    const elementId = getElementId(obj as FabricObject);
+    const border = resolvePdfImageBorder(imageElementsById.get(elementId));
 
     images.push({
       imagePath: originalPath,
@@ -80,12 +94,52 @@ export function collectExportData(
       widthMm: pxToMm(widthPx),
       heightMm: pxToMm(heightPx),
       rotationDeg: obj.angle ?? 0,
+      ...border,
     });
   }
 
   return {
     page: { widthMm: pageWidthMm, heightMm: pageHeightMm, background },
     images,
+  };
+}
+
+const VALID_BORDER_STYLE_IDS = new Set<ImageBorderStyleId>([
+  "custom",
+  "matte-frame",
+  "gallery-frame",
+  "ornate-gold",
+  "walnut-frame",
+]);
+
+export function resolvePdfImageBorder(
+  imageElement?: ImageElement,
+): Pick<PdfImageElement, "borderStyle" | "borderColor" | "borderWidth"> {
+  if (!imageElement) return {};
+  const hasAnyBorderData =
+    imageElement.borderStyle !== undefined ||
+    imageElement.borderColor !== undefined ||
+    imageElement.borderWidth !== undefined;
+  if (!hasAnyBorderData) return {};
+
+  const styleId = imageElement.borderStyle;
+  if (styleId && VALID_BORDER_STYLE_IDS.has(styleId as ImageBorderStyleId)) {
+    const resolved = resolveImageBorderStyle(
+      styleId as ImageBorderStyleId,
+      imageElement.borderColor,
+      imageElement.borderWidth,
+    );
+    return {
+      borderStyle: resolved.styleId,
+      borderColor: resolved.borderColor,
+      borderWidth: resolved.borderWidth,
+    };
+  }
+
+  return {
+    borderStyle: imageElement.borderStyle,
+    borderColor: imageElement.borderColor,
+    borderWidth: imageElement.borderWidth,
   };
 }
 

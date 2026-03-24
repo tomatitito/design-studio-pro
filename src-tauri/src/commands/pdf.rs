@@ -70,6 +70,9 @@ mod tests {
                 width_mm: 50.0,
                 height_mm: 50.0,
                 rotation_deg: 0.0,
+                border_style: None,
+                border_color: None,
+                border_width: None,
             }],
             output_path: "/tmp/test.pdf".to_string(),
         };
