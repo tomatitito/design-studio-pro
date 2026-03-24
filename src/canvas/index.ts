@@ -26,3 +26,17 @@ export type { PagePreset } from "./sheet";
 export { BACKGROUND_PRESETS, getBackgroundPreviewStyle } from "../backgrounds";
 export { collectExportData, exportPdf } from "./export";
 export type { PdfPageConfig, PdfImageElement, PdfExportRequest } from "./export";
+export {
+  applyBorderToImageElements,
+  applyBorderToCanvasObjects,
+  collectTargetImageIds,
+  resolveImageBorderStyle,
+  IMAGE_BORDER_STYLE_PRESETS,
+} from "./imageBorders";
+export type {
+  BorderApplicationMode,
+  ImageBorderUpdateInput,
+  ImageBorderStyleId,
+  BorderStylePreset,
+  ResolvedImageBorderStyle,
+} from "./imageBorders";

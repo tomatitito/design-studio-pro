@@ -27,6 +27,9 @@ export interface ImageElement extends BaseElement {
   elementType: "image";
   src: string;
   alt: string;
+  borderStyle?: string;
+  borderColor?: string;
+  borderWidth?: number;
 }
 
 export interface TextElement extends BaseElement {

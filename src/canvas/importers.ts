@@ -117,7 +117,11 @@ export async function addImageToCanvas(
   }
 
   // Lock uniform scaling so images always preserve their aspect ratio
-  img.set({ lockUniScaling: true });
+  img.set({
+    lockUniScaling: true,
+    strokeWidth: 0,
+    strokeUniform: true,
+  });
 
   // Store the original filesystem path so the export pipeline can reference
   // the actual file instead of the convertFileSrc URL.
@@ -152,6 +156,8 @@ export async function addImageToCanvas(
       zIndex: page.elements.length,
       locked: false,
       visible: true,
+      borderStyle: "custom",
+      borderWidth: 0,
     };
     projectStore.updatePage(page.id, {
       elements: [...page.elements, imageElement],

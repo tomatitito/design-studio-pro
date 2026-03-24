@@ -1,6 +1,16 @@
-import { useMemo } from "react";
-import { BACKGROUND_PRESETS, getBackgroundPreviewStyle } from "../canvas";
+import { useMemo, useState } from "react";
+import {
+  BACKGROUND_PRESETS,
+  getBackgroundPreviewStyle,
+  applyBorderToImageElements,
+  applyBorderToCanvasObjects,
+  collectTargetImageIds,
+  IMAGE_BORDER_STYLE_PRESETS,
+  resolveImageBorderStyle,
+  type ImageBorderStyleId,
+} from "../canvas";
 import { useProjectStore, useUIStore, type Panel } from "../stores";
+import { useCanvasStore } from "./CanvasContext";
 import { AssetLibrary } from "./AssetLibrary";
 
 const PANELS: { id: Panel; label: string }[] = [
@@ -16,8 +26,13 @@ export function Sidebar() {
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const currentProject = useProjectStore((s) => s.currentProject);
+  const selectedElementIds = useUIStore((s) => s.selectedElementIds);
   const updatePage = useProjectStore((s) => s.updatePage);
   const setDirty = useProjectStore((s) => s.setDirty);
+  const canvas = useCanvasStore((s) => s.canvas);
+  const [borderColor, setBorderColor] = useState("#000000");
+  const [borderWidth, setBorderWidth] = useState(2);
+  const [borderStyle, setBorderStyle] = useState<ImageBorderStyleId>("custom");
   const currentPage = currentProject?.pages[0] ?? null;
   const activeSolidColor = useMemo(() => {
     if (!currentPage) return "#ffffff";
@@ -28,6 +43,36 @@ export function Sidebar() {
     if (!currentPage) return;
     updatePage(currentPage.id, { backgroundColor });
     setDirty(true);
+  };
+
+  const applyImageBorder = (mode: "selected" | "all") => {
+    if (!currentPage) return;
+    const resolvedStyle = resolveImageBorderStyle(
+      borderStyle,
+      borderColor,
+      borderWidth,
+    );
+    const targetIds = collectTargetImageIds(
+      currentPage.elements,
+      mode,
+      selectedElementIds,
+    );
+    if (targetIds.length === 0) return;
+
+    const elements = applyBorderToImageElements(currentPage.elements, {
+      mode,
+      selectedIds: selectedElementIds,
+      styleId: borderStyle,
+      borderColor: borderColor,
+      borderWidth: borderWidth,
+    });
+
+    updatePage(currentPage.id, { elements });
+    setDirty(true);
+
+    if (canvas) {
+      applyBorderToCanvasObjects(canvas, targetIds, resolvedStyle);
+    }
   };
 
   if (!sidebarOpen) {
@@ -137,6 +182,81 @@ export function Sidebar() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                Picture Border
+              </div>
+              <div className="space-y-2 rounded-md border border-neutral-700 bg-neutral-900/60 p-3">
+                <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                  <span>Style</span>
+                  <select
+                    value={borderStyle}
+                    onChange={(event) => {
+                      const nextStyle = event.target.value as ImageBorderStyleId;
+                      const resolved = resolveImageBorderStyle(nextStyle);
+                      setBorderStyle(nextStyle);
+                      setBorderColor(resolved.borderColor);
+                      setBorderWidth(resolved.borderWidth);
+                    }}
+                    className="w-32 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white"
+                    data-testid="image-border-style-select"
+                  >
+                    {IMAGE_BORDER_STYLE_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                  <span>Color</span>
+                  <input
+                    type="color"
+                    value={borderColor}
+                    onChange={(event) => setBorderColor(event.target.value)}
+                    className="h-7 w-9 rounded border-0 bg-transparent p-0"
+                    data-testid="image-border-color-input"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                  <span>Width</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={borderWidth}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      setBorderWidth(Number.isFinite(parsed) ? parsed : 0);
+                    }}
+                    className="w-16 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-right text-[11px] text-white"
+                    data-testid="image-border-width-input"
+                  />
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyImageBorder("selected")}
+                    className="rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white transition hover:border-neutral-400"
+                    data-testid="apply-image-border-selected"
+                  >
+                    Selected
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyImageBorder("all")}
+                    className="rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white transition hover:border-neutral-400"
+                    data-testid="apply-image-border-all"
+                  >
+                    All Images
+                  </button>
+                </div>
               </div>
             </div>
           </div>
