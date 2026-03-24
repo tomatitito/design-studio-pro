@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use design_studio_pro_lib::core::pdf::{self, PdfExportRequest, PdfImageElement, PdfPageConfig};
 use design_studio_pro_lib::core::project_io;
 use design_studio_pro_lib::models::{
@@ -22,6 +22,14 @@ enum Commands {
     Backgrounds,
 
     /// Create a new .dsproj project file
+    #[command(
+        group(
+            ArgGroup::new("border_spec")
+                .args(["border_style", "border_color", "border_width"])
+                .multiple(true)
+        ),
+        after_help = "Examples:\n  dsp new --size a4 --add-image img1.png --output out.dsproj\n  dsp new --add-image img1.png --add-image img2.png --border-style ornate-gold --all-images -o framed.dsproj\n  dsp new --add-image img1.png --add-image img2.png --border-color \"#00aa55\" --border-width 2 --image-index 1 -o out.dsproj"
+    )]
     New {
         /// Project name
         #[arg(long, default_value = "Untitled")]
@@ -63,20 +71,32 @@ enum Commands {
         #[arg(long = "border-width")]
         border_width: Option<f64>,
 
-        /// Border style preset (custom, matte-frame, gallery-frame, ornate-gold, walnut-frame)
-        #[arg(long = "border-style")]
-        border_style: Option<String>,
+        /// Border style preset
+        #[arg(long = "border-style", value_enum)]
+        border_style: Option<BorderStylePreset>,
 
         /// Zero-based image index to target (repeatable)
-        #[arg(long = "image-index")]
+        #[arg(
+            long = "image-index",
+            conflicts_with = "all_images",
+            requires = "border_spec"
+        )]
         image_index: Vec<usize>,
 
         /// Apply border to all images
-        #[arg(long = "all-images", default_value_t = false)]
+        #[arg(long = "all-images", default_value_t = false, requires = "border_spec")]
         all_images: bool,
     },
 
     /// Open an existing project, optionally add images, and save
+    #[command(
+        group(
+            ArgGroup::new("border_spec")
+                .args(["border_style", "border_color", "border_width"])
+                .multiple(true)
+        ),
+        after_help = "Examples:\n  dsp open project.dsproj --background sunset-bloom\n  dsp open project.dsproj --border-style walnut-frame --all-images\n  dsp open project.dsproj --border-color \"#111111\" --border-width 3 --image-index 0"
+    )]
     Open {
         /// Path to .dsproj file
         project: String,
@@ -109,16 +129,20 @@ enum Commands {
         #[arg(long = "border-width")]
         border_width: Option<f64>,
 
-        /// Border style preset (custom, matte-frame, gallery-frame, ornate-gold, walnut-frame)
-        #[arg(long = "border-style")]
-        border_style: Option<String>,
+        /// Border style preset
+        #[arg(long = "border-style", value_enum)]
+        border_style: Option<BorderStylePreset>,
 
         /// Zero-based image index to target (repeatable)
-        #[arg(long = "image-index")]
+        #[arg(
+            long = "image-index",
+            conflicts_with = "all_images",
+            requires = "border_spec"
+        )]
         image_index: Vec<usize>,
 
         /// Apply border to all images
-        #[arg(long = "all-images", default_value_t = false)]
+        #[arg(long = "all-images", default_value_t = false, requires = "border_spec")]
         all_images: bool,
     },
 
@@ -187,6 +211,15 @@ struct BorderStyle {
     style: String,
     color: String,
     width: f64,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum BorderStylePreset {
+    Custom,
+    MatteFrame,
+    GalleryFrame,
+    OrnateGold,
+    WalnutFrame,
 }
 
 fn resolve_background_spec(input: &str) -> String {
@@ -315,7 +348,10 @@ fn build_pdf_image(image_path: &str, pos: (f64, f64), size: (f64, f64)) -> PdfIm
     }
 }
 
-fn build_pdf_image_from_project_element(resolved_path: String, el: &Element) -> Option<PdfImageElement> {
+fn build_pdf_image_from_project_element(
+    resolved_path: String,
+    el: &Element,
+) -> Option<PdfImageElement> {
     if let ElementType::Image {
         border_style,
         border_color,
@@ -420,52 +456,43 @@ fn parse_orientation(s: &str) -> Result<Orientation, String> {
     }
 }
 
-fn preset_border_style(style_name: &str) -> Option<BorderStyle> {
+fn preset_border_style(style_name: BorderStylePreset) -> BorderStyle {
     match style_name {
-        "custom" => Some(BorderStyle {
+        BorderStylePreset::Custom => BorderStyle {
             style: "custom".to_string(),
             color: "#000000".to_string(),
             width: 1.0,
-        }),
-        "matte-frame" => Some(BorderStyle {
+        },
+        BorderStylePreset::MatteFrame => BorderStyle {
             style: "matte-frame".to_string(),
             color: "#f5f1e8".to_string(),
             width: 12.0,
-        }),
-        "gallery-frame" => Some(BorderStyle {
+        },
+        BorderStylePreset::GalleryFrame => BorderStyle {
             style: "gallery-frame".to_string(),
             color: "#1f2937".to_string(),
             width: 6.0,
-        }),
-        "ornate-gold" => Some(BorderStyle {
+        },
+        BorderStylePreset::OrnateGold => BorderStyle {
             style: "ornate-gold".to_string(),
             color: "#d4af37".to_string(),
             width: 8.0,
-        }),
-        "walnut-frame" => Some(BorderStyle {
+        },
+        BorderStylePreset::WalnutFrame => BorderStyle {
             style: "walnut-frame".to_string(),
             color: "#5c3a21".to_string(),
             width: 10.0,
-        }),
-        _ => None,
+        },
     }
 }
 
 fn resolve_border_style(
-    border_style: Option<String>,
+    border_style: Option<BorderStylePreset>,
     border_color: Option<String>,
     border_width: Option<f64>,
 ) -> Result<Option<BorderStyle>, String> {
     let mut resolved = match border_style {
-        Some(style_name) => {
-            let style = preset_border_style(&style_name).ok_or_else(|| {
-                format!(
-                    "Invalid border style '{}'. Use one of: custom, matte-frame, gallery-frame, ornate-gold, walnut-frame",
-                    style_name
-                )
-            })?;
-            Some(style)
-        }
+        Some(style_name) => Some(preset_border_style(style_name)),
         None => {
             if border_color.is_some() || border_width.is_some() {
                 Some(BorderStyle {
@@ -574,7 +601,7 @@ fn cmd_new(
     image_sizes: Vec<String>,
     output: String,
     background: String,
-    border_style: Option<String>,
+    border_style: Option<BorderStylePreset>,
     border_color: Option<String>,
     border_width: Option<f64>,
     image_indices: Vec<usize>,
@@ -654,7 +681,7 @@ fn cmd_open(
     image_sizes: Vec<String>,
     output: Option<String>,
     background: Option<String>,
-    border_style: Option<String>,
+    border_style: Option<BorderStylePreset>,
     border_color: Option<String>,
     border_width: Option<f64>,
     image_indices: Vec<usize>,
@@ -941,7 +968,7 @@ mod tests {
 
     #[test]
     fn resolve_border_style_uses_frame_preset_defaults() {
-        let style = resolve_border_style(Some("matte-frame".to_string()), None, None).unwrap();
+        let style = resolve_border_style(Some(BorderStylePreset::MatteFrame), None, None).unwrap();
         let style = style.expect("expected style");
         assert_eq!(style.style, "matte-frame");
         assert_eq!(style.color, "#f5f1e8");
