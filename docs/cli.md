@@ -46,6 +46,11 @@ dsp new [OPTIONS] --output <PATH>
 | `--position <X,Y>`                    | Position in mm for preceding image                      | `0,0`         |
 | `--image-size <W,H>`                  | Size in mm for preceding image                          | auto          |
 | `--background <SPEC>`                 | Background preset, hex color, or `linear-gradient(...)` | `paper-white` |
+| `--border-style <STYLE>`              | Border style preset (`custom`, `matte-frame`, `gallery-frame`, `ornate-gold`, `walnut-frame`) | — |
+| `--border-color <HEX>`                | Border color to apply to images                          | —             |
+| `--border-width <N>`                  | Border width to apply to images                          | —             |
+| `--image-index <N>`                   | Zero-based image index to target (repeatable)            | —             |
+| `--all-images`                        | Apply border to all images                               | false         |
 | `-o, --output <PATH>`                 | Output `.dsproj` path (required)                        | —             |
 
 **Examples:**
@@ -66,6 +71,18 @@ dsp new --size 200x300 \
 
 # Photo sheet with a gradient background preset
 dsp new --size a4 --background sunset-bloom --output gradient-sheet.dsproj
+
+# Add red borders to every added image
+dsp new --size a4 \
+  --add-image img1.png --add-image img2.png \
+  --border-color "#ff0000" --border-width 2 --all-images \
+  --output bordered.dsproj
+
+# Apply frame-like ornate style to all images
+dsp new --size a4 \
+  --add-image img1.png --add-image img2.png \
+  --border-style ornate-gold --all-images \
+  --output framed.dsproj
 ```
 
 ### `dsp open` — Open and modify a project
@@ -85,6 +102,11 @@ dsp open <PROJECT> [OPTIONS]
 | `--position <X,Y>`    | Position in mm for preceding image            | `0,0`            |
 | `--image-size <W,H>`  | Size in mm for preceding image                | auto             |
 | `--background <SPEC>` | Replace the page background                   | unchanged        |
+| `--border-style <STYLE>`| Border style preset (`custom`, `matte-frame`, `gallery-frame`, `ornate-gold`, `walnut-frame`) | — |
+| `--border-color <HEX>`| Border color to apply to images               | —                |
+| `--border-width <N>`  | Border width to apply to images               | —                |
+| `--image-index <N>`   | Zero-based image index to target (repeatable) | —                |
+| `--all-images`        | Apply border to all images                    | false            |
 | `-o, --output <PATH>` | Output path                                   | overwrites input |
 
 **Examples:**
@@ -99,6 +121,20 @@ dsp open project.dsproj --add-image logo.png --position 0,0 --output updated.dsp
 # Swap the photo sheet background to a custom gradient
 dsp open project.dsproj \
   --background "linear-gradient(145deg, #1f4d3a 0%, #7dd3a7 100%)"
+
+# Add border to one specific picture (image index 0)
+dsp open project.dsproj --border-color "#111111" --border-width 3 --image-index 0
+
+# Add border to multiple pictures (image indices 1 and 3)
+dsp open project.dsproj \
+  --border-color "#00aa55" --border-width 2 \
+  --image-index 1 --image-index 3
+
+# Add border to all pictures
+dsp open project.dsproj --border-color "#ffffff" --border-width 1 --all-images
+
+# Apply walnut frame preset to all pictures
+dsp open project.dsproj --border-style walnut-frame --all-images
 ```
 
 ### `dsp export-pdf` — Export to PDF

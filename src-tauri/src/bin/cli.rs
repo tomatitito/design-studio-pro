@@ -5,6 +5,7 @@ use design_studio_pro_lib::models::{
     Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position, Project,
     ProjectSettings, Size,
 };
+use std::collections::HashSet;
 use std::path::Path;
 use std::process;
 
@@ -53,6 +54,26 @@ enum Commands {
         /// Page background preset, solid hex, or linear-gradient(...)
         #[arg(long, default_value = "paper-white")]
         background: String,
+
+        /// Border color to apply to image(s), e.g. #ff0000
+        #[arg(long = "border-color")]
+        border_color: Option<String>,
+
+        /// Border width to apply to image(s)
+        #[arg(long = "border-width")]
+        border_width: Option<f64>,
+
+        /// Border style preset (custom, matte-frame, gallery-frame, ornate-gold, walnut-frame)
+        #[arg(long = "border-style")]
+        border_style: Option<String>,
+
+        /// Zero-based image index to target (repeatable)
+        #[arg(long = "image-index")]
+        image_index: Vec<usize>,
+
+        /// Apply border to all images
+        #[arg(long = "all-images", default_value_t = false)]
+        all_images: bool,
     },
 
     /// Open an existing project, optionally add images, and save
@@ -79,6 +100,26 @@ enum Commands {
         /// Page background preset, solid hex, or linear-gradient(...)
         #[arg(long)]
         background: Option<String>,
+
+        /// Border color to apply to image(s), e.g. #ff0000
+        #[arg(long = "border-color")]
+        border_color: Option<String>,
+
+        /// Border width to apply to image(s)
+        #[arg(long = "border-width")]
+        border_width: Option<f64>,
+
+        /// Border style preset (custom, matte-frame, gallery-frame, ornate-gold, walnut-frame)
+        #[arg(long = "border-style")]
+        border_style: Option<String>,
+
+        /// Zero-based image index to target (repeatable)
+        #[arg(long = "image-index")]
+        image_index: Vec<usize>,
+
+        /// Apply border to all images
+        #[arg(long = "all-images", default_value_t = false)]
+        all_images: bool,
     },
 
     /// Export a project or ad-hoc images to PDF
@@ -134,6 +175,19 @@ const BACKGROUND_PRESETS: [(&str, &str); 8] = [
         "linear-gradient(145deg, #1f4d3a 0%, #7dd3a7 100%)",
     ),
 ];
+
+#[derive(Debug, Clone)]
+enum BorderTarget {
+    All,
+    Indices(Vec<usize>),
+}
+
+#[derive(Debug, Clone)]
+struct BorderStyle {
+    style: String,
+    color: String,
+    width: f64,
+}
 
 fn resolve_background_spec(input: &str) -> String {
     BACKGROUND_PRESETS
@@ -255,6 +309,33 @@ fn build_pdf_image(image_path: &str, pos: (f64, f64), size: (f64, f64)) -> PdfIm
         width_mm: size.0,
         height_mm: size.1,
         rotation_deg: 0.0,
+        border_style: None,
+        border_color: None,
+        border_width: None,
+    }
+}
+
+fn build_pdf_image_from_project_element(resolved_path: String, el: &Element) -> Option<PdfImageElement> {
+    if let ElementType::Image {
+        border_style,
+        border_color,
+        border_width,
+        ..
+    } = &el.element_type
+    {
+        Some(PdfImageElement {
+            image_path: resolved_path,
+            x_mm: el.position.x,
+            y_mm: el.position.y,
+            width_mm: el.size.width,
+            height_mm: el.size.height,
+            rotation_deg: el.rotation,
+            border_style: border_style.clone(),
+            border_color: border_color.clone(),
+            border_width: *border_width,
+        })
+    } else {
+        None
     }
 }
 
@@ -269,6 +350,9 @@ fn build_element(index: usize, image_path: &str, pos: (f64, f64), size: (f64, f6
                 .and_then(|n| n.to_str())
                 .unwrap_or("image")
                 .to_string(),
+            border_style: None,
+            border_color: None,
+            border_width: None,
         },
         position: Position { x: pos.0, y: pos.1 },
         size: Size {
@@ -336,6 +420,151 @@ fn parse_orientation(s: &str) -> Result<Orientation, String> {
     }
 }
 
+fn preset_border_style(style_name: &str) -> Option<BorderStyle> {
+    match style_name {
+        "custom" => Some(BorderStyle {
+            style: "custom".to_string(),
+            color: "#000000".to_string(),
+            width: 1.0,
+        }),
+        "matte-frame" => Some(BorderStyle {
+            style: "matte-frame".to_string(),
+            color: "#f5f1e8".to_string(),
+            width: 12.0,
+        }),
+        "gallery-frame" => Some(BorderStyle {
+            style: "gallery-frame".to_string(),
+            color: "#1f2937".to_string(),
+            width: 6.0,
+        }),
+        "ornate-gold" => Some(BorderStyle {
+            style: "ornate-gold".to_string(),
+            color: "#d4af37".to_string(),
+            width: 8.0,
+        }),
+        "walnut-frame" => Some(BorderStyle {
+            style: "walnut-frame".to_string(),
+            color: "#5c3a21".to_string(),
+            width: 10.0,
+        }),
+        _ => None,
+    }
+}
+
+fn resolve_border_style(
+    border_style: Option<String>,
+    border_color: Option<String>,
+    border_width: Option<f64>,
+) -> Result<Option<BorderStyle>, String> {
+    let mut resolved = match border_style {
+        Some(style_name) => {
+            let style = preset_border_style(&style_name).ok_or_else(|| {
+                format!(
+                    "Invalid border style '{}'. Use one of: custom, matte-frame, gallery-frame, ornate-gold, walnut-frame",
+                    style_name
+                )
+            })?;
+            Some(style)
+        }
+        None => {
+            if border_color.is_some() || border_width.is_some() {
+                Some(BorderStyle {
+                    style: "custom".to_string(),
+                    color: "#000000".to_string(),
+                    width: 1.0,
+                })
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(style) = resolved.as_mut() {
+        if let Some(color) = border_color {
+            style.color = color;
+        }
+        if let Some(width) = border_width {
+            if width < 0.0 {
+                return Err("Border width cannot be negative".to_string());
+            }
+            style.width = width;
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_border_target(
+    indices: Vec<usize>,
+    all_images: bool,
+) -> Result<Option<BorderTarget>, String> {
+    if all_images && !indices.is_empty() {
+        return Err(
+            "Cannot combine --all-images with one or more --image-index values".to_string(),
+        );
+    }
+    if all_images {
+        return Ok(Some(BorderTarget::All));
+    }
+    if indices.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(BorderTarget::Indices(indices)))
+    }
+}
+
+fn apply_border_to_images(
+    elements: &mut [Element],
+    target: BorderTarget,
+    style: &BorderStyle,
+) -> Result<(), String> {
+    let image_positions: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, element)| match element.element_type {
+            ElementType::Image { .. } => Some(idx),
+            _ => None,
+        })
+        .collect();
+
+    let target_positions: Vec<usize> = match target {
+        BorderTarget::All => image_positions,
+        BorderTarget::Indices(indices) => {
+            let mut unique = HashSet::new();
+            let mut positions = Vec::new();
+            for image_index in indices {
+                if image_index >= image_positions.len() {
+                    return Err(format!(
+                        "Image index {} is out of range ({} images available)",
+                        image_index,
+                        image_positions.len()
+                    ));
+                }
+                if unique.insert(image_index) {
+                    positions.push(image_positions[image_index]);
+                }
+            }
+            positions
+        }
+    };
+
+    for element_index in target_positions {
+        if let ElementType::Image {
+            border_style,
+            border_color,
+            border_width,
+            ..
+        } = &mut elements[element_index].element_type
+        {
+            *border_style = Some(style.style.clone());
+            *border_color = Some(style.color.clone());
+            *border_width = Some(style.width);
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_new(
     name: String,
     size: String,
@@ -345,6 +574,11 @@ fn cmd_new(
     image_sizes: Vec<String>,
     output: String,
     background: String,
+    border_style: Option<String>,
+    border_color: Option<String>,
+    border_width: Option<f64>,
+    image_indices: Vec<usize>,
+    all_images: bool,
 ) -> Result<(), String> {
     let (w, h) = parse_page_size(&size)?;
     let orient = parse_orientation(&orientation)?;
@@ -357,6 +591,8 @@ fn cmd_new(
     let mut elements = Vec::new();
     let mut assets = Vec::new();
     let background = resolve_background_spec(&background);
+    let border_style = resolve_border_style(border_style, border_color, border_width)?;
+    let border_target = resolve_border_target(image_indices, all_images)?;
 
     for (i, img_path) in add_image.iter().enumerate() {
         if !Path::new(img_path).exists() {
@@ -371,6 +607,16 @@ fn cmd_new(
 
         elements.push(build_element(i, img_path, pos, sz));
         assets.push(build_asset(img_path));
+    }
+
+    if let Some(style) = border_style {
+        let target = border_target.unwrap_or(BorderTarget::All);
+        apply_border_to_images(&mut elements, target, &style)?;
+    } else if border_target.is_some() {
+        return Err(
+            "Border target provided without border style. Use --border-color and/or --border-width"
+                .to_string(),
+        );
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -408,6 +654,11 @@ fn cmd_open(
     image_sizes: Vec<String>,
     output: Option<String>,
     background: Option<String>,
+    border_style: Option<String>,
+    border_color: Option<String>,
+    border_width: Option<f64>,
+    image_indices: Vec<usize>,
+    all_images: bool,
 ) -> Result<(), String> {
     let extract_dir =
         tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
@@ -416,6 +667,8 @@ fn cmd_open(
 
     let mut project = loaded.manifest.project;
     let mut assets: Vec<Asset> = loaded.manifest.assets;
+    let border_style = resolve_border_style(border_style, border_color, border_width)?;
+    let border_target = resolve_border_target(image_indices, all_images)?;
 
     if let Some(page) = project.pages.first_mut() {
         if let Some(background) = background {
@@ -436,6 +689,16 @@ fn cmd_open(
             page.elements
                 .push(build_element(base_index + i, img_path, pos, sz));
             assets.push(build_asset(img_path));
+        }
+
+        if let Some(style) = border_style {
+            let target = border_target.unwrap_or(BorderTarget::All);
+            apply_border_to_images(&mut page.elements, target, &style)?;
+        } else if border_target.is_some() {
+            return Err(
+                "Border target provided without border style. Use --border-color and/or --border-width"
+                    .to_string(),
+            );
         }
     }
 
@@ -482,15 +745,7 @@ fn cmd_export_pdf(
                         })
                         .map(|a| a.file_path.clone())
                         .unwrap_or_else(|| src.clone());
-
-                    Some(PdfImageElement {
-                        image_path: resolved_path,
-                        x_mm: el.position.x,
-                        y_mm: el.position.y,
-                        width_mm: el.size.width,
-                        height_mm: el.size.height,
-                        rotation_deg: el.rotation,
-                    })
+                    build_pdf_image_from_project_element(resolved_path, el)
                 } else {
                     None
                 }
@@ -545,6 +800,186 @@ fn cmd_export_pdf(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_image_element(id: &str) -> Element {
+        Element {
+            id: id.to_string(),
+            element_type: ElementType::Image {
+                src: format!("/tmp/{}.png", id),
+                alt: id.to_string(),
+                border_style: None,
+                border_color: None,
+                border_width: None,
+            },
+            position: Position { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 50.0,
+                height: 30.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn apply_border_targets_single_image_by_index() {
+        let mut elements = vec![
+            sample_image_element("image-1"),
+            sample_image_element("image-2"),
+        ];
+
+        apply_border_to_images(
+            &mut elements,
+            BorderTarget::Indices(vec![0]),
+            &BorderStyle {
+                style: "custom".to_string(),
+                color: "#ff0000".to_string(),
+                width: 2.0,
+            },
+        )
+        .unwrap();
+
+        let first = &elements[0];
+        let second = &elements[1];
+        match &first.element_type {
+            ElementType::Image {
+                border_style,
+                border_color,
+                border_width,
+                ..
+            } => {
+                assert_eq!(border_style.as_deref(), Some("custom"));
+                assert_eq!(border_color.as_deref(), Some("#ff0000"));
+                assert_eq!(*border_width, Some(2.0));
+            }
+            _ => panic!("expected image"),
+        }
+        match &second.element_type {
+            ElementType::Image {
+                border_color,
+                border_width,
+                ..
+            } => {
+                assert_eq!(border_color, &None);
+                assert_eq!(border_width, &None);
+            }
+            _ => panic!("expected image"),
+        }
+    }
+
+    #[test]
+    fn apply_border_targets_multiple_images_by_indices() {
+        let mut elements = vec![
+            sample_image_element("image-1"),
+            sample_image_element("image-2"),
+        ];
+
+        apply_border_to_images(
+            &mut elements,
+            BorderTarget::Indices(vec![0, 1]),
+            &BorderStyle {
+                style: "custom".to_string(),
+                color: "#00ff00".to_string(),
+                width: 4.0,
+            },
+        )
+        .unwrap();
+
+        for element in &elements {
+            match &element.element_type {
+                ElementType::Image {
+                    border_color,
+                    border_width,
+                    ..
+                } => {
+                    assert_eq!(border_color.as_deref(), Some("#00ff00"));
+                    assert_eq!(*border_width, Some(4.0));
+                }
+                _ => panic!("expected image"),
+            }
+        }
+    }
+
+    #[test]
+    fn apply_border_targets_all_images() {
+        let mut elements = vec![
+            sample_image_element("image-1"),
+            sample_image_element("image-2"),
+        ];
+
+        apply_border_to_images(
+            &mut elements,
+            BorderTarget::All,
+            &BorderStyle {
+                style: "custom".to_string(),
+                color: "#0000ff".to_string(),
+                width: 1.5,
+            },
+        )
+        .unwrap();
+
+        for element in &elements {
+            match &element.element_type {
+                ElementType::Image {
+                    border_color,
+                    border_width,
+                    ..
+                } => {
+                    assert_eq!(border_color.as_deref(), Some("#0000ff"));
+                    assert_eq!(*border_width, Some(1.5));
+                }
+                _ => panic!("expected image"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_border_style_uses_frame_preset_defaults() {
+        let style = resolve_border_style(Some("matte-frame".to_string()), None, None).unwrap();
+        let style = style.expect("expected style");
+        assert_eq!(style.style, "matte-frame");
+        assert_eq!(style.color, "#f5f1e8");
+        assert_eq!(style.width, 12.0);
+    }
+
+    #[test]
+    fn build_pdf_image_from_project_element_keeps_border_fields() {
+        let el = Element {
+            id: "image-1".to_string(),
+            element_type: ElementType::Image {
+                src: "/tmp/image-1.png".to_string(),
+                alt: "image-1".to_string(),
+                border_style: Some("ornate-gold".to_string()),
+                border_color: Some("#d4af37".to_string()),
+                border_width: Some(8.0),
+            },
+            position: Position { x: 12.0, y: 34.0 },
+            size: Size {
+                width: 56.0,
+                height: 78.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        };
+
+        let mapped = build_pdf_image_from_project_element("/tmp/extracted.png".to_string(), &el)
+            .expect("expected pdf image");
+
+        assert_eq!(mapped.border_style.as_deref(), Some("ornate-gold"));
+        assert_eq!(mapped.border_color.as_deref(), Some("#d4af37"));
+        assert_eq!(mapped.border_width, Some(8.0));
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -564,6 +999,11 @@ fn main() {
             image_size,
             output,
             background,
+            border_style,
+            border_color,
+            border_width,
+            image_index,
+            all_images,
         } => cmd_new(
             name,
             size,
@@ -573,6 +1013,11 @@ fn main() {
             image_size,
             output,
             background,
+            border_style,
+            border_color,
+            border_width,
+            image_index,
+            all_images,
         ),
 
         Commands::Open {
@@ -582,7 +1027,24 @@ fn main() {
             image_size,
             output,
             background,
-        } => cmd_open(project, add_image, position, image_size, output, background),
+            border_style,
+            border_color,
+            border_width,
+            image_index,
+            all_images,
+        } => cmd_open(
+            project,
+            add_image,
+            position,
+            image_size,
+            output,
+            background,
+            border_style,
+            border_color,
+            border_width,
+            image_index,
+            all_images,
+        ),
 
         Commands::ExportPdf {
             project,
