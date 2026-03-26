@@ -336,4 +336,34 @@ describe("Canvas", () => {
     expect(sheet.left).toBe(originalSheetLeft);
     expect(sheet.top).toBe(originalSheetTop);
   });
+
+  it("brings a selected image to the front when overlapping images exist", () => {
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const lowerImage = {
+      type: "image",
+      elementId: "image-1",
+      bringToFront: vi.fn(),
+    };
+    const selectedImage = {
+      type: "image",
+      elementId: "image-2",
+      bringToFront: vi.fn(),
+    };
+
+    canvas.add(lowerImage);
+    canvas.add(selectedImage);
+    canvas.requestRenderAll.mockClear();
+
+    canvas.emit("selection:created", { selected: [selectedImage] });
+
+    expect(selectedImage.bringToFront).toHaveBeenCalledTimes(1);
+    expect(lowerImage.bringToFront).not.toHaveBeenCalled();
+    expect(canvas.requestRenderAll).toHaveBeenCalled();
+  });
 });

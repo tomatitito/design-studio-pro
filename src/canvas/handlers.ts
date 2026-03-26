@@ -81,6 +81,27 @@ function persistObjectPosition(target: FabricObject): boolean {
   return false;
 }
 
+function bringSelectedImagesToFront(
+  canvas: FabricCanvas,
+  selected: FabricObject[],
+): void {
+  let didReorder = false;
+  for (const obj of selected) {
+    const record = obj as unknown as Record<string, unknown>;
+    if (record.type !== "image") continue;
+
+    const bringToFront = record.bringToFront;
+    if (typeof bringToFront !== "function") continue;
+
+    (bringToFront as () => void).call(obj);
+    didReorder = true;
+  }
+
+  if (didReorder) {
+    canvas.requestRenderAll();
+  }
+}
+
 /**
  * Attach canvas event handlers that bridge Fabric.js events to Zustand stores.
  * Returns a cleanup function that removes all listeners.
@@ -91,6 +112,7 @@ export function attachCanvasHandlers(canvas: FabricCanvas): () => void {
   ) => {
     const ids = e.selected.map(getElementId).filter(Boolean);
     useUIStore.getState().setSelectedElements(ids);
+    bringSelectedImagesToFront(canvas, e.selected);
   };
 
   const handleSelectionUpdated = (
@@ -101,6 +123,7 @@ export function attachCanvasHandlers(canvas: FabricCanvas): () => void {
   ) => {
     const ids = e.selected.map(getElementId).filter(Boolean);
     useUIStore.getState().setSelectedElements(ids);
+    bringSelectedImagesToFront(canvas, e.selected);
   };
 
   const handleSelectionCleared = () => {
