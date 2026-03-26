@@ -102,4 +102,21 @@ describe("createPageSheet", () => {
     expect(sheet.left).toBe(120);
     expect(sheet.top).toBe(80);
   });
+
+  it("pins page sheet origin to top-left for stable centering math", () => {
+    const canvas = makeCanvas();
+
+    const sheet = createPageSheet(
+      canvas as never,
+      210,
+      297,
+      "#ffffff",
+    ) as unknown as {
+      originX?: string;
+      originY?: string;
+    };
+
+    expect(sheet.originX).toBe("left");
+    expect(sheet.originY).toBe("top");
+  });
 });

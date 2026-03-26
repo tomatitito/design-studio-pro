@@ -55,17 +55,28 @@ export function collectExportData(
       .map((element) => [element.id, element]),
   );
 
-  // The page sheet is placed at the centre of the canvas.  All image positions
-  // are in the same canvas-pixel coordinate space, so we need to express them
-  // relative to the sheet origin.
-  //
-  // Fabric.js v7 defaults to originX/originY = "center", so `left`/`top`
-  // refer to the *centre* of each object.  We need the top-left edges to
-  // compute correct PDF placement.
+  function getObjectLeftEdge(obj: FabricObject): number {
+    const widthPx = (obj.width ?? 0) * (obj.scaleX ?? 1);
+    const originX = obj.originX ?? "left";
+    if (originX === "center") return (obj.left ?? 0) - widthPx / 2;
+    if (originX === "right") return (obj.left ?? 0) - widthPx;
+    return obj.left ?? 0;
+  }
+
+  function getObjectTopEdge(obj: FabricObject): number {
+    const heightPx = (obj.height ?? 0) * (obj.scaleY ?? 1);
+    const originY = obj.originY ?? "top";
+    if (originY === "center") return (obj.top ?? 0) - heightPx / 2;
+    if (originY === "bottom") return (obj.top ?? 0) - heightPx;
+    return obj.top ?? 0;
+  }
+
+  // All image positions are in the same canvas-pixel coordinate space.
+  // We convert to sheet-relative coordinates using each object's actual origin.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sheet = objects.find((o) => (o as any).isPageSheet === true);
-  const sheetLeftEdge = (sheet?.left ?? 0) - (sheet?.width ?? 0) / 2;
-  const sheetTopEdge = (sheet?.top ?? 0) - (sheet?.height ?? 0) / 2;
+  const sheetLeftEdge = sheet ? getObjectLeftEdge(sheet as FabricObject) : 0;
+  const sheetTopEdge = sheet ? getObjectTopEdge(sheet as FabricObject) : 0;
 
   const images: PdfImageElement[] = [];
 
@@ -82,8 +93,8 @@ export function collectExportData(
 
     const widthPx = (obj.width ?? 0) * (obj.scaleX ?? 1);
     const heightPx = (obj.height ?? 0) * (obj.scaleY ?? 1);
-    const left = (obj.left ?? 0) - widthPx / 2 - sheetLeftEdge;
-    const top = (obj.top ?? 0) - heightPx / 2 - sheetTopEdge;
+    const left = getObjectLeftEdge(obj as FabricObject) - sheetLeftEdge;
+    const top = getObjectTopEdge(obj as FabricObject) - sheetTopEdge;
     const elementId = getElementId(obj as FabricObject);
     const border = resolvePdfImageBorder(imageElementsById.get(elementId));
 

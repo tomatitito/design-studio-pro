@@ -366,4 +366,74 @@ describe("Canvas", () => {
     expect(lowerImage.bringToFront).not.toHaveBeenCalled();
     expect(canvas.requestRenderAll).toHaveBeenCalled();
   });
+
+  it("re-fits the page after the first resize so the sheet stays centered when viewport grows", async () => {
+    class TestResizeObserver {
+      static instances: TestResizeObserver[] = [];
+      callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        TestResizeObserver.instances.push(this);
+      }
+
+      observe() {}
+      disconnect() {}
+
+      trigger() {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+
+    let rectCalls = 0;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => {
+      rectCalls += 1;
+      if (rectCalls === 1) {
+        return {
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 400,
+          top: 0,
+          left: 0,
+          right: 800,
+          bottom: 400,
+          toJSON: () => ({}),
+        };
+      }
+      return {
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 800,
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 800,
+        toJSON: () => ({}),
+      };
+    });
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    expect(canvas).toBeDefined();
+
+    const observer = TestResizeObserver.instances[0];
+    expect(observer).toBeDefined();
+
+    const initialFitCalls = canvas.zoomToPoint.mock.calls.length;
+    act(() => {
+      observer.trigger();
+    });
+
+    await waitFor(() => {
+      expect(canvas.zoomToPoint.mock.calls.length).toBeGreaterThan(initialFitCalls);
+    });
+  });
 });

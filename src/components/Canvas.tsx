@@ -53,6 +53,7 @@ export function Canvas() {
   const sheetRef = useRef<Rect | null>(null);
   const sheetSizeRef = useRef<{ width: number; height: number } | null>(null);
   const projectIdRef = useRef<string | null>(null);
+  const shouldAutoFitOnNextResizeRef = useRef(true);
   const storeApi = useCanvasStoreApi();
   const canvas = useCanvasStore((s) => s.canvas);
   const zoom = useUIStore((s) => s.zoom);
@@ -68,6 +69,12 @@ export function Canvas() {
     // Re-center/clamp the sheet after resize
     const sheet = sheetRef.current;
     if (sheet) {
+      if (shouldAutoFitOnNextResizeRef.current) {
+        fitSheetInView(fabricCanvas, sheet);
+        shouldAutoFitOnNextResizeRef.current = false;
+        return;
+      }
+
       const zoom = fabricCanvas.getZoom();
       const vpt = fabricCanvas.viewportTransform;
       const clamped = clampPanToSheet(fabricCanvas, sheet, zoom, {
@@ -124,6 +131,7 @@ export function Canvas() {
     sheetSizeRef.current = { width, height };
     projectIdRef.current = project.id;
     fitSheetInView(fabricCanvas, sheetRef.current);
+    shouldAutoFitOnNextResizeRef.current = true;
 
     return () => {
       detachHandlers();
@@ -174,6 +182,7 @@ export function Canvas() {
 
     if (sizeChanged || projectChanged) {
       fitSheetInView(canvas, sheetRef.current);
+      shouldAutoFitOnNextResizeRef.current = true;
     }
   }, [canvas, currentProject]);
 

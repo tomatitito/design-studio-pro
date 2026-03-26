@@ -49,6 +49,8 @@ export function createPageSheet(
     height: h,
     left: (canvasW - w) / 2,
     top: (canvasH - h) / 2,
+    originX: "left",
+    originY: "top",
     fill: createPageBackgroundFill(background, w, h),
     strokeWidth: 0,
     selectable: true,
