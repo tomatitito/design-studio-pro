@@ -14,6 +14,54 @@ const IMAGE_FILTER = {
   name: "Images",
   extensions: IMAGE_EXTENSIONS,
 };
+const PAGE_SHEET_FLAG = "isPageSheet";
+const QUADRANT_RATIO = 0.5;
+
+interface Bounds {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function getPageSheetBounds(canvas: FabricCanvas): Bounds | null {
+  const objects = canvas.getObjects();
+  for (const obj of objects) {
+    const record = obj as unknown as Record<string, unknown>;
+    if (!record[PAGE_SHEET_FLAG]) continue;
+
+    const left = (record.left as number | undefined) ?? 0;
+    const top = (record.top as number | undefined) ?? 0;
+    const width =
+      ((record.width as number | undefined) ?? 0) *
+      ((record.scaleX as number | undefined) ?? 1);
+    const height =
+      ((record.height as number | undefined) ?? 0) *
+      ((record.scaleY as number | undefined) ?? 1);
+
+    if (width > 0 && height > 0) {
+      return { left, top, width, height };
+    }
+  }
+
+  return null;
+}
+
+function scaleImageToFitBounds(img: FabricImage, bounds: Bounds): void {
+  const imageWidth = img.width ?? 0;
+  const imageHeight = img.height ?? 0;
+  if (imageWidth <= 0 || imageHeight <= 0) return;
+
+  const scale = Math.min(
+    1,
+    bounds.width / imageWidth,
+    bounds.height / imageHeight,
+  );
+  img.set({
+    scaleX: scale,
+    scaleY: scale,
+  });
+}
 
 /**
  * Opens a native file dialog filtered to image formats and imports
@@ -102,10 +150,28 @@ export async function addImageToCanvas(
     throw new Error(msg);
   }
 
-  // Determine placement position — default to center of viewport
+  const pageSheet = getPageSheetBounds(canvas);
+  if (pageSheet) {
+    // Default imports should be much smaller and fit inside the upper-left
+    // quadrant of the page sheet.
+    scaleImageToFitBounds(img, {
+      left: pageSheet.left,
+      top: pageSheet.top,
+      width: pageSheet.width * QUADRANT_RATIO,
+      height: pageSheet.height * QUADRANT_RATIO,
+    });
+  }
+
+  // Determine placement position.
   if (position) {
     img.set({ left: position.x, top: position.y });
+  } else if (pageSheet) {
+    img.set({
+      left: pageSheet.left,
+      top: pageSheet.top,
+    });
   } else {
+    // Fallback when no page sheet exists yet: center in viewport.
     const vpt = canvas.viewportTransform;
     const zoom = canvas.getZoom();
     const centerX = (canvas.getWidth() / 2 - vpt[4]) / zoom;
