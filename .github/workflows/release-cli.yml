@@ -1,0 +1,204 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            archive_name: dsp-x86_64-apple-darwin.tar.gz
+            binary_name: dsp
+            archive_format: tar.gz
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            archive_name: dsp-aarch64-apple-darwin.tar.gz
+            binary_name: dsp
+            archive_format: tar.gz
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive_name: dsp-x86_64-unknown-linux-gnu.tar.gz
+            binary_name: dsp
+            archive_format: tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_name: dsp-x86_64-pc-windows-msvc.zip
+            binary_name: dsp.exe
+            archive_format: zip
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build CLI binary
+        working-directory: src-tauri
+        env:
+          DSP_UPDATE_BASE_URL: https://github.com/${{ github.repository }}/releases/latest/download
+        run: cargo build --release --features cli --target ${{ matrix.target }}
+
+      - name: Package CLI archive
+        if: matrix.archive_format == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="release-staging/${{ matrix.target }}"
+          OUTPUT_DIR="release-assets"
+          BINARY_PATH="src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+
+          mkdir -p "$STAGING" "$OUTPUT_DIR"
+          cp "$BINARY_PATH" "$STAGING/${{ matrix.binary_name }}"
+
+          cat > "$STAGING/INSTALL.txt" <<EOF
+Standalone Design Studio Pro CLI $VERSION
+
+Official self-update installs are supported only from:
+  macOS/Linux: ~/.design-studio-pro/bin/dsp
+  Windows: %LOCALAPPDATA%\\DesignStudioPro\\bin\\dsp.exe
+
+Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
+EOF
+
+          tar -C "$STAGING" -czf "$OUTPUT_DIR/${{ matrix.archive_name }}" .
+
+      - name: Package CLI archive
+        if: matrix.archive_format == 'zip'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $staging = "release-staging/${{ matrix.target }}"
+          $outputDir = "release-assets"
+          $binaryPath = "src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+
+          New-Item -ItemType Directory -Force -Path $staging, $outputDir | Out-Null
+          Copy-Item $binaryPath -Destination "$staging/${{ matrix.binary_name }}"
+
+          @"
+Standalone Design Studio Pro CLI $version
+
+Official self-update installs are supported only from:
+  macOS/Linux: ~/.design-studio-pro/bin/dsp
+  Windows: %LOCALAPPDATA%\DesignStudioPro\bin\dsp.exe
+
+Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
+"@ | Set-Content -NoNewline -Path "$staging/INSTALL.txt"
+
+          Compress-Archive -Path "$staging/*" -DestinationPath "$outputDir/${{ matrix.archive_name }}" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: release-assets/${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-22.04
+    needs: build
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO="${GITHUB_REPOSITORY}"
+          TAG="${GITHUB_REF_NAME}"
+          RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          cd release-assets
+          find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | while read -r file; do
+            sha256sum "${file#./}"
+          done > dsp-checksums.txt
+
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const version = process.env.VERSION.replace(/^v/, '');
+          const baseUrl = process.env.BASE_URL;
+          const releaseUrl = process.env.RELEASE_URL;
+          const checksums = new Map();
+
+          for (const line of fs.readFileSync('dsp-checksums.txt', 'utf8').trim().split('\n')) {
+            const [hash, file] = line.trim().split(/\s+/);
+            checksums.set(file, hash);
+          }
+
+          const assets = {
+            'x86_64-apple-darwin': {
+              url: `${baseUrl}/dsp-x86_64-apple-darwin.tar.gz`,
+              sha256: checksums.get('dsp-x86_64-apple-darwin.tar.gz'),
+              archive: 'tar.gz',
+              binary_path: 'dsp',
+            },
+            'aarch64-apple-darwin': {
+              url: `${baseUrl}/dsp-aarch64-apple-darwin.tar.gz`,
+              sha256: checksums.get('dsp-aarch64-apple-darwin.tar.gz'),
+              archive: 'tar.gz',
+              binary_path: 'dsp',
+            },
+            'x86_64-unknown-linux-gnu': {
+              url: `${baseUrl}/dsp-x86_64-unknown-linux-gnu.tar.gz`,
+              sha256: checksums.get('dsp-x86_64-unknown-linux-gnu.tar.gz'),
+              archive: 'tar.gz',
+              binary_path: 'dsp',
+            },
+            'x86_64-pc-windows-msvc': {
+              url: `${baseUrl}/dsp-x86_64-pc-windows-msvc.zip`,
+              sha256: checksums.get('dsp-x86_64-pc-windows-msvc.zip'),
+              archive: 'zip',
+              binary_path: 'dsp.exe',
+            },
+          };
+
+          const manifest = {
+            version,
+            published_at: new Date().toISOString(),
+            notes_url: releaseUrl,
+            assets,
+          };
+
+          fs.writeFileSync('dsp-updates.json', JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+        env:
+          VERSION: ${{ github.ref_name }}
+          BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-assets/dsp-checksums.txt
+            release-assets/dsp-updates.json
+            release-assets/dsp-x86_64-apple-darwin.tar.gz
+            release-assets/dsp-aarch64-apple-darwin.tar.gz
+            release-assets/dsp-x86_64-unknown-linux-gnu.tar.gz
+            release-assets/dsp-x86_64-pc-windows-msvc.zip

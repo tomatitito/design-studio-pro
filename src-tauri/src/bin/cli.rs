@@ -5,7 +5,9 @@ use design_studio_pro_lib::models::{
     Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position, Project,
     ProjectSettings, Size,
 };
+use design_studio_pro_lib::updater::{self, AutomaticUpdateOutcome, CheckOutcome, InstallOutcome};
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::Path;
 use std::process;
 
@@ -18,6 +20,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Check for official CLI updates
+    Update {
+        #[command(subcommand)]
+        command: UpdateCommands,
+    },
+
+    /// Download and install the latest official CLI release
+    #[command(name = "self-update")]
+    SelfUpdate,
+
     /// List available background presets
     Backgrounds,
 
@@ -175,6 +187,12 @@ enum Commands {
         #[arg(long, default_value = "paper-white")]
         background: String,
     },
+}
+
+#[derive(Subcommand)]
+enum UpdateCommands {
+    /// Check whether a newer official CLI release exists
+    Check,
 }
 
 const BACKGROUND_PRESETS: [(&str, &str); 8] = [
@@ -827,6 +845,119 @@ fn cmd_export_pdf(
     Ok(())
 }
 
+fn current_cli_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+fn run_async<T, F>(future: F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, updater::UpdaterError>>,
+{
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Failed to initialize updater runtime: {error}"))?;
+
+    runtime.block_on(future).map_err(|error| error.to_string())
+}
+
+fn cmd_update_check() -> Result<(), String> {
+    match run_async(updater::check_for_updates(current_cli_version(), true))? {
+        CheckOutcome::UpToDate { .. } => {
+            eprintln!("dsp is up to date.");
+            Ok(())
+        }
+        CheckOutcome::UpdateAvailable {
+            current_version,
+            latest_version,
+            official_install,
+            ..
+        } => {
+            eprintln!(
+                "A new version of dsp is available: {latest_version} (current: {current_version})."
+            );
+            if !official_install {
+                eprintln!(
+                    "Self-update is supported only for the official install location. Reinstall from the official release to enable it."
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+fn cmd_self_update() -> Result<(), String> {
+    match run_async(updater::self_update(current_cli_version()))? {
+        InstallOutcome::UpToDate { .. } => {
+            eprintln!("dsp is up to date.");
+            Ok(())
+        }
+        InstallOutcome::Installed { new_version, .. }
+        | InstallOutcome::StagedWindowsReplacement { new_version, .. } => {
+            eprintln!("Updated dsp to {new_version}.");
+            Ok(())
+        }
+    }
+}
+
+fn should_run_startup_update(command: &Commands) -> bool {
+    !matches!(command, Commands::Update { .. } | Commands::SelfUpdate)
+}
+
+fn maybe_run_startup_update(command: &Commands) {
+    if !should_run_startup_update(command) {
+        return;
+    }
+
+    match run_async(updater::automatic_startup_update(current_cli_version())) {
+        Ok(AutomaticUpdateOutcome::Updated {
+            previous_version,
+            new_version,
+        }) => {
+            eprintln!(
+                "A new version of dsp is available: {new_version} (current: {previous_version}). Downloading and installing update..."
+            );
+            eprintln!("Updated dsp to {new_version}.");
+        }
+        Ok(AutomaticUpdateOutcome::UpdateFailed {
+            current_version,
+            latest_version,
+            reason,
+            ..
+        }) => {
+            eprintln!(
+                "A new version of dsp is available, but automatic update failed: {reason}. Run 'dsp self-update' or reinstall from the official release."
+            );
+            log::debug!(
+                "automatic update failed for current version {} -> {}: {}",
+                current_version,
+                latest_version,
+                reason
+            );
+        }
+        Ok(AutomaticUpdateOutcome::UpdateAvailable {
+            current_version,
+            latest_version,
+            official_install,
+        }) => {
+            eprintln!(
+                "A new version of dsp is available: {latest_version} (current: {current_version})."
+            );
+            if !official_install {
+                eprintln!(
+                    "Automatic install is only supported for the official install location. Reinstall from the official release to enable self-update."
+                );
+            }
+        }
+        Ok(AutomaticUpdateOutcome::Disabled)
+        | Ok(AutomaticUpdateOutcome::SkippedCooldown)
+        | Ok(AutomaticUpdateOutcome::UpToDate { .. }) => {}
+        Err(error) => {
+            log::debug!("automatic update check failed: {}", error);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1009,8 +1140,13 @@ mod tests {
 
 fn main() {
     let cli = Cli::parse();
+    maybe_run_startup_update(&cli.command);
 
     let result = match cli.command {
+        Commands::Update { command } => match command {
+            UpdateCommands::Check => cmd_update_check(),
+        },
+        Commands::SelfUpdate => cmd_self_update(),
         Commands::Backgrounds => {
             for (name, spec) in BACKGROUND_PRESETS {
                 println!("{name}\t{spec}");

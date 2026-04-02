@@ -17,7 +17,38 @@ cargo build --release --features cli
 # Binary: target/release/dsp
 ```
 
+## Self-Update
+
+`dsp` supports self-update only when it is installed in the official user-scoped location:
+
+- macOS/Linux: `~/.design-studio-pro/bin/dsp`
+- Windows: `%LOCALAPPDATA%\DesignStudioPro\bin\dsp.exe`
+
+Startup behavior for official installs:
+
+- `dsp` performs a cooldown-aware update check before normal command dispatch.
+- Automatic checks are skipped for `--help`, `--version`, `update check`, and `self-update`.
+- Update notices are printed to stderr so stdout stays script-friendly.
+
+Package-manager installs are intentionally unsupported for self-update.
+
 ## Subcommands
+
+### `dsp update check` — Check for updates
+
+Checks the latest official `dsp` release metadata and reports whether a newer version is available. This command does not install anything.
+
+```bash
+dsp update check
+```
+
+### `dsp self-update` — Install the latest official release
+
+Checks the release metadata, downloads the matching archive for the current platform, verifies the checksum, and replaces the installed binary in the official install location.
+
+```bash
+dsp self-update
+```
 
 ### `dsp backgrounds` — List background presets
 

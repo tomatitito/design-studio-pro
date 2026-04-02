@@ -47,6 +47,40 @@ pnpm lint
 pnpm build
 ```
 
+## Cross-Platform Release Pipeline (GitHub)
+
+This repo uses `package.json` as the single source of truth for app versioning.
+
+Workflows:
+- `.github/workflows/version-bump-release.yml`: watches version bumps in `package.json` on `main` / `master`, synchronizes `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, creates tag `v<version>`.
+- `.github/workflows/release-desktop.yml`: runs on tag pushes (`v*`) and builds/uploads Windows, macOS, and Linux release assets.
+- `.github/workflows/release-cli.yml`: runs on tag pushes (`v*`) and publishes standalone `dsp` archives plus `dsp-checksums.txt` and `dsp-updates.json`.
+
+Release flow (automatic tag + release):
+
+```bash
+# 1) Bump version in one place only (package.json)
+pnpm version:bump:patch   # or :minor / :major
+
+# 2) Commit and push to main/master
+git add .
+git commit -m "chore: bump version to 0.2.0"
+git push
+```
+
+What CI does:
+1. Syncs version into `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`.
+2. Commits sync changes if needed.
+3. Creates and pushes tag `v0.2.0` (if missing).
+4. Builds and publishes release assets for Windows, macOS, Linux on the GitHub Release for that tag.
+5. Builds and publishes standalone CLI archives and update metadata for `dsp` on the same tagged release.
+
+You can also run local sync manually:
+
+```bash
+pnpm version:sync
+```
+
 ## CLI Usage
 
 Build the CLI binary:
@@ -66,6 +100,15 @@ Run it from `src-tauri`:
 ```
 
 Full CLI reference and examples: [docs/cli.md](docs/cli.md)
+
+### CLI Self-Update
+
+Official `dsp` self-update support is limited to the user-scoped install locations used by the release workflow:
+
+- macOS/Linux: `~/.design-studio-pro/bin/dsp`
+- Windows: `%LOCALAPPDATA%\DesignStudioPro\bin\dsp.exe`
+
+Package-manager installs are intentionally unsupported for self-update. On startup, `dsp` checks for updates for official installs, and the manual commands are `dsp update check` and `dsp self-update`.
 
 ## Logging and Observability
 

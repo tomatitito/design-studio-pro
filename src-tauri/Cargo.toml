@@ -1,6 +1,6 @@
 [package]
 name = "design-studio-pro"
-version = "0.1.0"
+version = "0.1.1"
 description = "Design Studio Pro"
 authors = ["you"]
 edition = "2021"
@@ -29,10 +29,15 @@ image = "0.25"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 printpdf = "0.7"
 clap = { version = "4", features = ["derive"], optional = true }
+dirs = { version = "6", optional = true }
+flate2 = { version = "1", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+semver = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
 tempfile = { version = "3", optional = true }
 
 [features]
-cli = ["clap", "tempfile"]
+cli = ["clap", "dirs", "flate2", "reqwest", "semver", "tar", "tempfile"]
 
 [[bin]]
 name = "dsp"

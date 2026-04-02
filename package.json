@@ -1,11 +1,15 @@
 {
   "name": "design-studio-pro",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:bump:patch": "npm version patch --no-git-tag-version",
+    "version:bump:minor": "npm version minor --no-git-tag-version",
+    "version:bump:major": "npm version major --no-git-tag-version",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
