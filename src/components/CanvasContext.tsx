@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, type ReactNode, use, useMemo } from "react";
 import { createStore, useStore } from "zustand";
 import type { Canvas as FabricCanvas } from "fabric";

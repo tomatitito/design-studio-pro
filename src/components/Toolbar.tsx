@@ -14,6 +14,8 @@ const TOOLS: { id: Tool; label: string; shortcut: string }[] = [
   { id: "image", label: "Image", shortcut: "I" },
 ];
 
+type PageSheetRect = Rect & { isPageSheet?: boolean };
+
 export function Toolbar() {
   const selectedTool = useUIStore((s) => s.selectedTool);
   const setSelectedTool = useUIStore((s) => s.setSelectedTool);
@@ -38,7 +40,9 @@ export function Toolbar() {
 
   const getSheet = (): Rect | null => {
     if (!canvas) return null;
-    return canvas.getObjects().find((o) => (o as any).isPageSheet) as Rect ?? null;
+    return (
+      (canvas.getObjects() as PageSheetRect[]).find((object) => object.isPageSheet) ?? null
+    );
   };
 
   const handleZoomFit = () => {
@@ -56,14 +60,14 @@ export function Toolbar() {
 
     const sheet = getSheet();
     if (sheet) {
-      const vpt = canvas.viewportTransform;
+      const vpt = [...canvas.viewportTransform] as typeof canvas.viewportTransform;
       const clamped = clampPanToSheet(canvas, sheet, newZoom, {
         x: vpt[4],
         y: vpt[5],
       });
       vpt[4] = clamped.x;
       vpt[5] = clamped.y;
-      canvas.setViewportTransform([...vpt] as typeof canvas.viewportTransform);
+      canvas.setViewportTransform(vpt);
       setZoom(newZoom);
       setPanOffset(clamped);
     } else {

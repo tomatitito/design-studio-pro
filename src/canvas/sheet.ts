@@ -154,24 +154,21 @@ export function clampPanToSheet(
   const sheetW = sheet.width! * zoom;
   const sheetH = sheet.height! * zoom;
 
-  let x = pan.x;
-  let y = pan.y;
+  const centeredPan = computeCenteredPan(canvas, sheet, zoom);
 
-  if (sheetW <= viewportW) {
-    x = computeCenteredPan(canvas, sheet, zoom).x;
-  } else {
+  const x = (() => {
+    if (sheetW <= viewportW) return centeredPan.x;
     const minX = viewportW - (sheet.left! + sheet.width!) * zoom;
     const maxX = -sheet.left! * zoom;
-    x = Math.max(minX, Math.min(maxX, pan.x));
-  }
+    return Math.max(minX, Math.min(maxX, pan.x));
+  })();
 
-  if (sheetH <= viewportH) {
-    y = computeCenteredPan(canvas, sheet, zoom).y;
-  } else {
+  const y = (() => {
+    if (sheetH <= viewportH) return centeredPan.y;
     const minY = viewportH - (sheet.top! + sheet.height!) * zoom;
     const maxY = -sheet.top! * zoom;
-    y = Math.max(minY, Math.min(maxY, pan.y));
-  }
+    return Math.max(minY, Math.min(maxY, pan.y));
+  })();
 
   return { x, y };
 }

@@ -91,8 +91,10 @@ describe("addImageToCanvas", () => {
       id: "asset-1",
       name: "photo.jpg",
       filePath: "/tmp/photo.jpg",
-      thumbPath: null,
-      kind: "image",
+      thumbnailPath: null,
+      fileSize: 0,
+      mimeType: "image/jpeg",
+      dimensions: { width: 2000, height: 1000 },
       createdAt: "2026-01-01T00:00:00Z",
     };
 
