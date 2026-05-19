@@ -1,10 +1,22 @@
-# DSP Self-Update
+# DSP Self-Update — Complete
+
+## Current Status
+
+Implementation is complete in the repository:
+
+- Standalone CLI release workflow exists at `.github/workflows/release-cli.yml`.
+- Updater modules exist under `src-tauri/src/updater/`.
+- CLI commands `dsp update check` and `dsp self-update` are wired in `src-tauri/src/bin/cli.rs`.
+- README and CLI docs describe official install locations and self-update behavior.
+- Verified locally with `cd src-tauri && cargo test --features cli` (200 tests passed: 195 lib + 5 CLI).
+
+Remaining validation is release-environment validation only: confirm artifact upload, `dsp-updates.json`, and self-update behavior on an actual tagged GitHub release across target platforms.
 
 ## Context
 
-`dsp` is currently a Rust CLI binary built from `src-tauri` behind the `cli` feature flag. The repo already has automated version bumping and tagged GitHub releases, but the existing release pipeline is focused on desktop installers. There is no standalone `dsp` release channel, no machine-readable update metadata, and no updater logic in the CLI.
+`dsp` is a Rust CLI binary built from `src-tauri` behind the `cli` feature flag. The repo has automated version bumping and tagged GitHub releases, standalone CLI artifacts, machine-readable update metadata, and updater logic in the CLI.
 
-We want `dsp` to support self-update for official installs only. On startup, it should detect if a newer version exists, inform the user, download the correct release artifact, verify it, and install it. Package manager installs are explicitly out of scope.
+`dsp` supports self-update for official installs only. On startup, it detects whether a newer version exists, informs the user, downloads the correct release artifact, verifies it, and installs it. Package manager installs are explicitly out of scope.
 
 ## Goals
 
@@ -228,7 +240,7 @@ Rules:
 
 ### New files
 
-- `plans/active/dsp-self-update.md`
+- `plans/complete/dsp-self-update.md`
 - `src-tauri/src/updater/mod.rs`
 - `src-tauri/src/updater/types.rs`
 - `src-tauri/src/updater/manifest.rs`
@@ -248,71 +260,71 @@ Rules:
 
 ### Phase 1: Release Infrastructure
 
-- [ ] Add standalone CLI release workflow.
-- [ ] Build `dsp` archives for macOS Intel, macOS ARM, Linux x86_64, Windows x86_64.
-- [ ] Generate `dsp-checksums.txt`.
-- [ ] Generate `dsp-updates.json`.
-- [ ] Upload CLI artifacts and metadata to tagged GitHub releases.
+- [x] Add standalone CLI release workflow.
+- [x] Build `dsp` archives for macOS Intel, macOS ARM, Linux x86_64, Windows x86_64.
+- [x] Generate `dsp-checksums.txt`.
+- [x] Generate `dsp-updates.json`.
+- [x] Upload CLI artifacts and metadata to tagged GitHub releases.
 
 ### Phase 2: Updater Core
 
-- [ ] Add updater module skeleton under `src-tauri/src/updater/`.
-- [ ] Add CLI-only updater dependencies to `src-tauri/Cargo.toml`.
-- [ ] Implement manifest types and parsing.
-- [ ] Implement platform target resolution from `OS` + `ARCH`.
-- [ ] Implement semver comparison and update availability result types.
+- [x] Add updater module skeleton under `src-tauri/src/updater/`.
+- [x] Add CLI-only updater dependencies to `src-tauri/Cargo.toml`.
+- [x] Implement manifest types and parsing.
+- [x] Implement platform target resolution from `OS` + `ARCH`.
+- [x] Implement semver comparison and update availability result types.
 
 ### Phase 3: Read-Only Update Check
 
-- [ ] Implement manifest fetch from the latest-release download URL.
-- [ ] Implement `dsp update check`.
-- [ ] Add updater state file and cooldown tracking.
-- [ ] Print clear stderr messages for update availability.
+- [x] Implement manifest fetch from the latest-release download URL.
+- [x] Implement `dsp update check`.
+- [x] Add updater state file and cooldown tracking.
+- [x] Print clear stderr messages for update availability.
 
 ### Phase 4: Official Install Detection
 
-- [ ] Implement official install root resolution per platform.
-- [ ] Implement current binary path validation.
-- [ ] Refuse self-update for non-official install locations.
-- [ ] Document official install requirement in CLI docs.
+- [x] Implement official install root resolution per platform.
+- [x] Implement current binary path validation.
+- [x] Refuse self-update for non-official install locations.
+- [x] Document official install requirement in CLI docs.
 
 ### Phase 5: Download and Verification
 
-- [ ] Download update archive to a temp directory.
-- [ ] Verify SHA-256 against manifest.
-- [ ] Extract archive contents.
-- [ ] Validate the expected binary exists.
-- [ ] Ensure executable permissions are correct on Unix.
+- [x] Download update archive to a temp directory.
+- [x] Verify SHA-256 against manifest.
+- [x] Extract archive contents.
+- [x] Validate the expected binary exists.
+- [x] Ensure executable permissions are correct on Unix.
 
 ### Phase 6: Install Update
 
-- [ ] Implement safe binary replacement on macOS/Linux.
-- [ ] Implement staged replacement on Windows.
-- [ ] Persist updater state after successful install.
-- [ ] Implement `dsp self-update`.
+- [x] Implement safe binary replacement on macOS/Linux.
+- [x] Implement staged replacement on Windows.
+- [x] Persist updater state after successful install.
+- [x] Implement `dsp self-update`.
 
 ### Phase 7: Startup Auto-Update
 
-- [ ] Hook updater check into CLI startup.
-- [ ] Skip automatic checks for help/version/update commands.
-- [ ] Print notice and auto-install when a newer version exists.
-- [ ] Ensure updater failures never block normal command execution.
+- [x] Hook updater check into CLI startup.
+- [x] Skip automatic checks for help/version/update commands.
+- [x] Print notice and auto-install when a newer version exists.
+- [x] Ensure updater failures never block normal command execution.
 
 ### Phase 8: Tests
 
-- [ ] Add unit tests for manifest parsing.
-- [ ] Add unit tests for semver comparison.
-- [ ] Add unit tests for platform asset selection.
-- [ ] Add unit tests for official install detection.
-- [ ] Add unit tests for updater state cooldown logic.
-- [ ] Add tests for checksum verification.
-- [ ] Add integration tests using a mock manifest and temp install root.
+- [x] Add unit tests for manifest parsing.
+- [x] Add unit tests for semver comparison.
+- [x] Add unit tests for platform asset selection.
+- [x] Add unit tests for official install detection.
+- [x] Add unit tests for updater state cooldown logic.
+- [x] Add tests for checksum verification.
+- [x] Add integration tests using a mock manifest and temp install root.
 
 ### Phase 9: Documentation
 
-- [ ] Update `README.md` with official CLI install and self-update behavior.
-- [ ] Update `docs/cli.md` with `dsp update check` and `dsp self-update`.
-- [ ] Document that package managers are unsupported for self-update.
+- [x] Update `README.md` with official CLI install and self-update behavior.
+- [x] Update `docs/cli.md` with `dsp update check` and `dsp self-update`.
+- [x] Document that package managers are unsupported for self-update.
 
 ## Acceptance Criteria
 

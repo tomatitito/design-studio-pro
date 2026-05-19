@@ -19,19 +19,21 @@ Comprehensive approach to validate that Design Studio Pro meets all specificatio
 
 ## Test Execution Commands
 
+Currently defined commands:
+
 ```bash
 # Frontend tests
-pnpm test                     # All tests
-pnpm test:unit                # Unit tests only
-pnpm test:coverage            # With coverage report
+pnpm test                     # All Vitest tests
+pnpm test:coverage            # Vitest coverage report
+pnpm typecheck                # TypeScript static checks
+pnpm lint                     # ESLint
 
-# Backend tests
-cargo test --all              # All Rust tests
-cargo tarpaulin --out Html    # With coverage report
-
-# E2E tests
-pnpm test:e2e                 # End-to-end tests
+# Backend / CLI tests
+cd src-tauri && cargo test
+cd src-tauri && cargo test --features cli
 ```
+
+Planned but not currently defined in `package.json`: `test:unit`, `test:integration`, `test:e2e`, and `benchmark`.
 
 ## Performance Requirements
 

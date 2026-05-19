@@ -1,12 +1,24 @@
-# CLI for Design Studio Pro
+# CLI for Design Studio Pro — Complete
+
+## Current Status
+
+The `dsp` CLI is implemented and documented:
+
+- Binary target: `src-tauri/src/bin/cli.rs` behind the `cli` feature.
+- Shared Rust core: project I/O and PDF export are reused by GUI and CLI.
+- Commands include `new`, `open`, `export-pdf`, `backgrounds`, `update check`, and `self-update`.
+- CLI docs live in `docs/cli.md`; README includes CLI build/use notes.
+- Verified locally with `cd src-tauri && cargo test --features cli` (200 tests passed: 195 lib + 5 CLI).
+
+This document is retained as implementation history.
 
 ## Context
 
-Design Studio Pro is a Tauri desktop app (Rust backend + React frontend) for designing layouts and exporting to PDF. All core logic (PDF generation, project I/O, models) lives in `src-tauri/src/core/` and `src-tauri/src/models/`, cleanly separated from the Tauri IPC layer. We want a CLI binary that reuses this core logic directly, enabling headless/scripted workflows.
+Design Studio Pro is a Tauri desktop app (Rust backend + React frontend) for designing layouts and exporting to PDF. All core logic (PDF generation, project I/O, models) lives in `src-tauri/src/core/` and `src-tauri/src/models/`, cleanly separated from the Tauri IPC layer. The CLI binary reuses this core logic directly, enabling headless/scripted workflows.
 
 ## Approach
 
-Add a new binary target `dsp` to the existing `src-tauri` crate. This binary directly calls the existing `core::pdf::export_pdf()` and `core::project_io::*` functions — zero code duplication.
+The `dsp` binary target in the existing `src-tauri` crate directly calls the existing `core::pdf::export_pdf()` and `core::project_io::*` functions — zero code duplication.
 
 ## Changes
 
