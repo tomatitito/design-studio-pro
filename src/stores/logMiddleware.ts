@@ -20,12 +20,20 @@ function diffState(
   return changes;
 }
 
+function isTestMode(): boolean {
+  return typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
+}
+
+function shouldLogInTestMode(): boolean {
+  return import.meta.env?.VITE_ZUSTAND_TEST_LOGS === "true";
+}
+
 let logFn: LogFn = (entry) => {
   console.log("[zustand]", JSON.stringify(entry));
 };
 
 async function initTauriLog() {
-  if (typeof import.meta !== "undefined" && import.meta.env?.MODE === "test") {
+  if (isTestMode()) {
     return;
   }
   try {
@@ -60,6 +68,7 @@ export function logMiddleware(name: string): LogMiddleware {
           next as Record<string, unknown>,
         );
         if (Object.keys(changes).length > 0) {
+          if (isTestMode() && !shouldLogInTestMode()) return;
           const entry = { store: name, timestamp: Date.now(), changes };
           tauriLogReady.then(() => logFn(entry));
         }

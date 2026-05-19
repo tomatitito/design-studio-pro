@@ -28,4 +28,4 @@ RUST_LOG=info,zustand=off pnpm tauri dev  # only Rust backend logs
 
 ### Test Environment
 
-The log middleware skips Tauri IPC initialization when `import.meta.env.MODE === "test"` and falls back to `console.log`.
+The log middleware skips Tauri IPC initialization when `import.meta.env.MODE === "test"`. Zustand logs are silenced by default in tests to keep Vitest output readable. Set `VITE_ZUSTAND_TEST_LOGS=true` to re-enable the console fallback while debugging tests.
