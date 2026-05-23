@@ -55,7 +55,7 @@ describe("addImageToCanvas", () => {
     });
   });
 
-  it("scales imported images to fit the upper-left quadrant of the page sheet", async () => {
+  it("scales imported images to fit the page sheet quadrant and centers default imports", async () => {
     const image = {
       width: 2000,
       height: 1000,
@@ -104,12 +104,68 @@ describe("addImageToCanvas", () => {
     const expectedScale = Math.min(1, (840 * 0.5) / 2000, (1188 * 0.5) / 1000);
     expect(image.scaleX).toBeCloseTo(expectedScale);
     expect(image.scaleY).toBeCloseTo(expectedScale);
-    expect(image.left).toBe(100);
-    expect(image.top).toBe(80);
+    const expectedWidth = 2000 * expectedScale;
+    const expectedHeight = 1000 * expectedScale;
+    expect(image.left).toBeCloseTo(100 + (840 - expectedWidth) / 2);
+    expect(image.top).toBeCloseTo(80 + (1188 - expectedHeight) / 2);
 
     const pageElements = useProjectStore.getState().currentProject?.pages[0]?.elements ?? [];
     expect(pageElements).toHaveLength(1);
-    expect(pageElements[0].size.width).toBeCloseTo(2000 * expectedScale);
-    expect(pageElements[0].size.height).toBeCloseTo(1000 * expectedScale);
+    expect(pageElements[0].position.x).toBeCloseTo((840 - expectedWidth) / 2);
+    expect(pageElements[0].position.y).toBeCloseTo((1188 - expectedHeight) / 2);
+    expect(pageElements[0].size.width).toBeCloseTo(expectedWidth);
+    expect(pageElements[0].size.height).toBeCloseTo(expectedHeight);
+  });
+
+  it("persists explicit drop positions relative to the page sheet", async () => {
+    const image = {
+      width: 400,
+      height: 200,
+      scaleX: 1,
+      scaleY: 1,
+      left: 0,
+      top: 0,
+      set: vi.fn((update: Record<string, unknown>) => {
+        Object.assign(image, update);
+      }),
+    };
+    fabricImageFromURL.mockResolvedValue(image);
+
+    const sheet = {
+      isPageSheet: true,
+      left: 100,
+      top: 80,
+      width: 840,
+      height: 1188,
+      scaleX: 1,
+      scaleY: 1,
+    };
+    const canvas = {
+      viewportTransform: [1, 0, 0, 1, 0, 0],
+      getZoom: vi.fn(() => 1),
+      getWidth: vi.fn(() => 800),
+      getHeight: vi.fn(() => 600),
+      getObjects: vi.fn(() => [sheet]),
+      add: vi.fn(),
+      setActiveObject: vi.fn(),
+      requestRenderAll: vi.fn(),
+    };
+    const asset: Asset = {
+      id: "asset-2",
+      name: "drop.jpg",
+      filePath: "/tmp/drop.jpg",
+      thumbnailPath: null,
+      fileSize: 0,
+      mimeType: "image/jpeg",
+      dimensions: { width: 400, height: 200 },
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+
+    await addImageToCanvas(canvas as never, asset, { x: 250, y: 200 });
+
+    expect(image.left).toBe(250);
+    expect(image.top).toBe(200);
+    const pageElements = useProjectStore.getState().currentProject?.pages[0]?.elements ?? [];
+    expect(pageElements[0].position).toEqual({ x: 150, y: 120 });
   });
 });

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { Project, Page } from "../types";
 import { logMiddleware } from "./logMiddleware";
+import { normalizeProjectElementCoordinates } from "../projectCoordinates";
 
 export interface ProjectState {
   currentProject: Project | null;
@@ -50,10 +51,11 @@ export const useProjectStore = create<ProjectState>()(
 
       setCurrentProject: (project) =>
         set((state) => {
-          state.currentProject = project;
+          const normalizedProject = project ? normalizeProjectElementCoordinates(project) : null;
+          state.currentProject = normalizedProject;
           state.activePageId =
-            getProjectPageById(project, state.activePageId)?.id ??
-            getFallbackPage(project)?.id ??
+            getProjectPageById(normalizedProject, state.activePageId)?.id ??
+            getFallbackPage(normalizedProject)?.id ??
             null;
         }),
 

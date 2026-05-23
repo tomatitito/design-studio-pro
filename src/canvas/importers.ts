@@ -116,7 +116,7 @@ export function getDroppedImageFiles(event: DragEvent): File[] {
  *
  * @param canvas  The Fabric.js canvas instance.
  * @param asset   The imported asset returned from `importImageViaDialog` or `invoke("import_asset")`.
- * @param position  Optional canvas-space position. Defaults to the center of the current viewport.
+ * @param position  Optional canvas-space position. Defaults to the center of the current page.
  * @returns The created FabricImage object.
  */
 export async function addImageToCanvas(
@@ -154,13 +154,16 @@ export async function addImageToCanvas(
     });
   }
 
-  // Determine placement position.
+  // Determine placement position. Fabric objects are placed in canvas
+  // coordinates, but project elements below are persisted page-relative.
   if (position) {
     img.set({ left: position.x, top: position.y });
   } else if (pageSheet) {
+    const scaledWidth = (img.width ?? 0) * (img.scaleX ?? 1);
+    const scaledHeight = (img.height ?? 0) * (img.scaleY ?? 1);
     img.set({
-      left: pageSheet.left,
-      top: pageSheet.top,
+      left: pageSheet.left + (pageSheet.width - scaledWidth) / 2,
+      top: pageSheet.top + (pageSheet.height - scaledHeight) / 2,
     });
   } else {
     // Fallback when no page sheet exists yet: center in viewport.
@@ -201,8 +204,8 @@ export async function addImageToCanvas(
       src: asset.filePath,
       alt: asset.name,
       position: {
-        x: img.left ?? 0,
-        y: img.top ?? 0,
+        x: (img.left ?? 0) - (pageSheet?.left ?? 0),
+        y: (img.top ?? 0) - (pageSheet?.top ?? 0),
       },
       size: {
         width: (img.width ?? 0) * (img.scaleX ?? 1),
