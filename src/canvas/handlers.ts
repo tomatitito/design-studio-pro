@@ -1,7 +1,7 @@
 import type { Canvas as FabricCanvas, FabricObject, ModifiedEvent } from "fabric";
 import type { TEvent } from "fabric";
 import { useUIStore } from "../stores";
-import { useProjectStore } from "../stores";
+import { getActiveProjectPage, useProjectStore } from "../stores";
 
 /**
  * We store our application element ID on Fabric objects using this key.
@@ -48,37 +48,42 @@ function getPageDragPosition(obj: FabricObject): { left: number; top: number } {
   };
 }
 
+function getPageSheetOriginFromCanvasObject(target: FabricObject): { left: number; top: number } {
+  const canvas = target.canvas;
+  const sheet = canvas
+    ?.getObjects()
+    .find((obj) => (obj as unknown as Record<string, unknown>)[PAGE_SHEET_FLAG]);
+  return { left: sheet?.left ?? 0, top: sheet?.top ?? 0 };
+}
+
 function persistObjectPosition(target: FabricObject): boolean {
   const id = getElementId(target);
   if (!id) return false;
 
   const projectStore = useProjectStore.getState();
-  const project = projectStore.currentProject;
-  if (!project) return false;
+  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
+  if (!page) return false;
 
-  for (const page of project.pages) {
-    const elementIndex = page.elements.findIndex((el) => el.id === id);
-    if (elementIndex === -1) continue;
+  const elementIndex = page.elements.findIndex((el) => el.id === id);
+  if (elementIndex === -1) return false;
 
-    const updatedElements = [...page.elements];
-    updatedElements[elementIndex] = {
-      ...updatedElements[elementIndex],
-      position: {
-        x: target.left ?? 0,
-        y: target.top ?? 0,
-      },
-      size: {
-        width: (target.width ?? 0) * (target.scaleX ?? 1),
-        height: (target.height ?? 0) * (target.scaleY ?? 1),
-      },
-      rotation: target.angle ?? 0,
-    };
+  const origin = getPageSheetOriginFromCanvasObject(target);
+  const updatedElements = [...page.elements];
+  updatedElements[elementIndex] = {
+    ...updatedElements[elementIndex],
+    position: {
+      x: (target.left ?? 0) - origin.left,
+      y: (target.top ?? 0) - origin.top,
+    },
+    size: {
+      width: (target.width ?? 0) * (target.scaleX ?? 1),
+      height: (target.height ?? 0) * (target.scaleY ?? 1),
+    },
+    rotation: target.angle ?? 0,
+  };
 
-    projectStore.updatePage(page.id, { elements: updatedElements });
-    return true;
-  }
-
-  return false;
+  projectStore.updatePage(page.id, { elements: updatedElements });
+  return true;
 }
 
 function bringSelectedImagesToFront(

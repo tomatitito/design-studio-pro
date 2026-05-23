@@ -20,6 +20,13 @@ function isPageContent(obj: FabricObject): boolean {
   return Boolean(record[PAGE_CONTENT_FLAG]) || (!isPageSheet(obj) && Boolean(record.elementId));
 }
 
+function getPageSheetOrigin(canvas: FabricCanvas): { left: number; top: number } {
+  const sheet = canvas
+    .getObjects()
+    .find((obj) => (obj as unknown as Record<string, unknown>)[PAGE_SHEET_FLAG]);
+  return { left: sheet?.left ?? 0, top: sheet?.top ?? 0 };
+}
+
 function removePageContent(canvas: FabricCanvas): void {
   const objects = canvas.getObjects() as FabricObject[];
   const contentObjects = objects.filter(isPageContent);
@@ -36,10 +43,14 @@ function removePageContent(canvas: FabricCanvas): void {
   }
 }
 
-function applyBaseElementProps(obj: FabricObject, element: Element): void {
+function applyBaseElementProps(
+  obj: FabricObject,
+  element: Element,
+  origin: { left: number; top: number },
+): void {
   obj.set({
-    left: element.position.x,
-    top: element.position.y,
+    left: origin.left + element.position.x,
+    top: origin.top + element.position.y,
     angle: element.rotation,
     opacity: element.opacity,
     visible: element.visible,
@@ -51,7 +62,10 @@ function applyBaseElementProps(obj: FabricObject, element: Element): void {
   obj.setCoords();
 }
 
-async function createImageObject(element: ImageElement): Promise<FabricObject> {
+async function createImageObject(
+  element: ImageElement,
+  origin: { left: number; top: number },
+): Promise<FabricObject> {
   const image = await FabricImage.fromURL(convertFileSrc(element.src));
   const width = image.width ?? 0;
   const height = image.height ?? 0;
@@ -67,15 +81,18 @@ async function createImageObject(element: ImageElement): Promise<FabricObject> {
     strokeUniform: true,
   });
   (image as unknown as Record<string, unknown>).originalFilePath = element.src;
-  applyBaseElementProps(image as FabricObject, element);
+  applyBaseElementProps(image as FabricObject, element, origin);
 
   return image as FabricObject;
 }
 
-async function createObjectForElement(element: Element): Promise<FabricObject | null> {
+async function createObjectForElement(
+  element: Element,
+  origin: { left: number; top: number },
+): Promise<FabricObject | null> {
   switch (element.elementType) {
     case "image":
-      return createImageObject(element);
+      return createImageObject(element, origin);
     default:
       // Rendering for text/shapes/groups is not implemented yet. Keep the
       // switch exhaustive so image page switching works without leaking stale
@@ -102,9 +119,10 @@ export async function renderPageContent(
     return;
   }
 
+  const origin = getPageSheetOrigin(canvas);
   const elements = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
   for (const element of elements) {
-    const obj = await createObjectForElement(element);
+    const obj = await createObjectForElement(element, origin);
     if (!shouldContinue()) return;
     if (obj) {
       canvas.add(obj);
