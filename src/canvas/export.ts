@@ -5,7 +5,7 @@ import { FabricImage } from "fabric";
 import { pxToMm } from "./sheet";
 import { getElementId } from "./handlers";
 import { resolveImageBorderStyle, type ImageBorderStyleId } from "./imageBorders";
-import { useProjectStore } from "../stores";
+import { getActiveProjectPage, useProjectStore } from "../stores";
 import type { ImageElement } from "../types";
 
 /** Configuration for a PDF page. */
@@ -48,7 +48,8 @@ export function collectExportData(
   background?: string,
 ): Omit<PdfExportRequest, "outputPath"> {
   const objects = canvas.getObjects();
-  const currentPage = useProjectStore.getState().currentProject?.pages[0];
+  const { currentProject, activePageId } = useProjectStore.getState();
+  const currentPage = getActiveProjectPage(currentProject, activePageId);
   const imageElementsById = new Map<string, ImageElement>(
     (currentPage?.elements ?? [])
       .filter((element): element is ImageElement => element.elementType === "image")
@@ -192,7 +193,10 @@ export async function exportPdf(canvas: FabricCanvas): Promise<void> {
 
   if (!outputPath) return;
 
-  const pageBackground = project.pages[0]?.backgroundColor;
+  const pageBackground = getActiveProjectPage(
+    project,
+    useProjectStore.getState().activePageId,
+  )?.backgroundColor;
   const data = collectExportData(canvas, widthMm, heightMm, pageBackground);
   const request: PdfExportRequest = { ...data, outputPath };
 

@@ -1,6 +1,6 @@
 import type { Canvas as FabricCanvas } from "fabric";
 import { useHistoryStore } from "../stores";
-import { useProjectStore } from "../stores";
+import { getActiveProjectPage, useProjectStore } from "../stores";
 import type { Element } from "../types";
 
 const DEBOUNCE_MS = 300;
@@ -20,10 +20,9 @@ export function attachHistoryTracking(canvas: FabricCanvas): () => void {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   function getCurrentSnapshot(): CanvasSnapshot | null {
-    const project = useProjectStore.getState().currentProject;
-    if (!project || project.pages.length === 0) return null;
-    // Use the first page or the active page
-    const page = project.pages[0];
+    const { currentProject, activePageId } = useProjectStore.getState();
+    const page = getActiveProjectPage(currentProject, activePageId);
+    if (!page) return null;
     return {
       pageId: page.id,
       elements: structuredClone(page.elements),

@@ -50,6 +50,7 @@ describe("addImageToCanvas", () => {
         },
       },
       projects: [],
+      activePageId: "page-1",
       isDirty: false,
     });
   });

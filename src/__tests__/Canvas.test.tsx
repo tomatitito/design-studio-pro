@@ -99,7 +99,32 @@ const fabricMock = vi.hoisted(() => {
     }
   }
 
-  return { canvasInstances, rectInstances, MockCanvas, MockRect };
+  const fabricImageFromURL = vi.fn(async (url: string) => {
+    const image = {
+      type: "image",
+      width: 100,
+      height: 50,
+      src: url,
+      left: 0,
+      top: 0,
+      scaleX: 1,
+      scaleY: 1,
+      elementId: "",
+      set: vi.fn((update: Record<string, unknown>) => {
+        Object.assign(image, update);
+      }),
+      setCoords: vi.fn(),
+      getBoundingRect: vi.fn(() => ({
+        left: image.left,
+        top: image.top,
+        width: image.width * image.scaleX,
+        height: image.height * image.scaleY,
+      })),
+    };
+    return image;
+  });
+
+  return { canvasInstances, rectInstances, MockCanvas, MockRect, fabricImageFromURL };
 });
 
 vi.mock("fabric", () => ({
@@ -115,7 +140,7 @@ vi.mock("fabric", () => ({
       Object.assign(this, opts);
     }
   },
-  FabricImage: { fromURL: vi.fn() },
+  FabricImage: { fromURL: fabricMock.fabricImageFromURL },
   ActiveSelection: vi.fn(),
   Point: class {
     x: number;
@@ -128,7 +153,10 @@ vi.mock("fabric", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/api/core");
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://${path}`,
+  invoke: vi.fn(),
+}));
 
 const TEST_PROJECT: Project = {
   id: "project-1",
@@ -158,6 +186,7 @@ describe("Canvas", () => {
   beforeEach(() => {
     fabricMock.canvasInstances.length = 0;
     fabricMock.rectInstances.length = 0;
+    fabricMock.fabricImageFromURL.mockClear();
 
     vi.stubGlobal(
       "ResizeObserver",
@@ -182,6 +211,7 @@ describe("Canvas", () => {
     useProjectStore.setState({
       currentProject: structuredClone(TEST_PROJECT),
       projects: [],
+      activePageId: TEST_PROJECT.pages[0]?.id ?? null,
       isDirty: false,
     });
     useUIStore.setState({
@@ -365,6 +395,95 @@ describe("Canvas", () => {
     expect(selectedImage.bringToFront).toHaveBeenCalledTimes(1);
     expect(lowerImage.bringToFront).not.toHaveBeenCalled();
     expect(canvas.requestRenderAll).toHaveBeenCalled();
+  });
+
+  it("renders only the active page content and background when switching pages", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          id: "page-1",
+          backgroundColor: "#ffffff",
+          elements: [
+            {
+              id: "image-page-1",
+              elementType: "image",
+              src: "/tmp/page-1.png",
+              alt: "Page 1 image",
+              position: { x: 10, y: 20 },
+              size: { width: 200, height: 100 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          id: "page-2",
+          name: "Page 2",
+          backgroundColor: "#22304a",
+          order: 1,
+          elements: [
+            {
+              id: "image-page-2",
+              elementType: "image",
+              src: "/tmp/page-2.png",
+              alt: "Page 2 image",
+              position: { x: 30, y: 40 },
+              size: { width: 50, height: 25 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({
+      currentProject: project,
+      activePageId: "page-1",
+    });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-1")).toBe(true);
+    });
+    expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-2")).toBe(false);
+    expect(sheet.fill).toBe("#ffffff");
+
+    act(() => {
+      useProjectStore.getState().setActivePage("page-2");
+    });
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-2")).toBe(true);
+    });
+    expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-1")).toBe(false);
+    expect(sheet.fill).toBe("#22304a");
+
+    act(() => {
+      useProjectStore.getState().setActivePage("page-1");
+    });
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-1")).toBe(true);
+    });
+    expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "image-page-2")).toBe(false);
+    expect(sheet.fill).toBe("#ffffff");
   });
 
   it("re-fits the page after the first resize so the sheet stays centered when viewport grows", async () => {

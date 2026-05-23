@@ -4,7 +4,7 @@ import { FabricImage } from "fabric";
 import type { Canvas as FabricCanvas } from "fabric";
 import type { Asset, ImageElement, Position } from "../types";
 import { setElementId } from "./handlers";
-import { useProjectStore } from "../stores";
+import { getActiveProjectPage, useProjectStore } from "../stores";
 
 /** Image file extensions supported for import. */
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif"];
@@ -33,11 +33,9 @@ function getPageSheetBounds(canvas: FabricCanvas): Bounds | null {
     const left = (record.left as number | undefined) ?? 0;
     const top = (record.top as number | undefined) ?? 0;
     const width =
-      ((record.width as number | undefined) ?? 0) *
-      ((record.scaleX as number | undefined) ?? 1);
+      ((record.width as number | undefined) ?? 0) * ((record.scaleX as number | undefined) ?? 1);
     const height =
-      ((record.height as number | undefined) ?? 0) *
-      ((record.scaleY as number | undefined) ?? 1);
+      ((record.height as number | undefined) ?? 0) * ((record.scaleY as number | undefined) ?? 1);
 
     if (width > 0 && height > 0) {
       return { left, top, width, height };
@@ -52,11 +50,7 @@ function scaleImageToFitBounds(img: FabricImage, bounds: Bounds): void {
   const imageHeight = img.height ?? 0;
   if (imageWidth <= 0 || imageHeight <= 0) return;
 
-  const scale = Math.min(
-    1,
-    bounds.width / imageWidth,
-    bounds.height / imageHeight,
-  );
+  const scale = Math.min(1, bounds.width / imageWidth, bounds.height / imageHeight);
   img.set({
     scaleX: scale,
     scaleY: scale,
@@ -69,9 +63,7 @@ function scaleImageToFitBounds(img: FabricImage, bounds: Bounds): void {
  *
  * Returns the imported Asset, or null if the user cancelled.
  */
-export async function importImageViaDialog(
-  projectDir?: string,
-): Promise<Asset | null> {
+export async function importImageViaDialog(projectDir?: string): Promise<Asset | null> {
   const selected = await open({
     multiple: false,
     filters: [IMAGE_FILTER],
@@ -201,9 +193,8 @@ export async function addImageToCanvas(
 
   // Persist the element in the project store
   const projectStore = useProjectStore.getState();
-  const project = projectStore.currentProject;
-  if (project && project.pages.length > 0) {
-    const page = project.pages[0];
+  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
+  if (page) {
     const imageElement: ImageElement = {
       id: asset.id,
       elementType: "image",

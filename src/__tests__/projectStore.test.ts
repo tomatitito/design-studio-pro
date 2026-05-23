@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useProjectStore } from "../stores/projectStore";
+import { selectActivePage, useProjectStore } from "../stores/projectStore";
 import type { Project, Page } from "../types";
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -37,6 +37,7 @@ describe("projectStore", () => {
     useProjectStore.setState({
       currentProject: null,
       projects: [],
+      activePageId: null,
       isDirty: false,
     });
   });
@@ -48,10 +49,30 @@ describe("projectStore", () => {
       expect(useProjectStore.getState().currentProject).toEqual(project);
     });
 
+    it("selects the first ordered page when setting a project", () => {
+      const pageTwo = makePage({ id: "pg-2", order: 2 });
+      const pageOne = makePage({ id: "pg-1", order: 1 });
+      useProjectStore.getState().setCurrentProject(makeProject({ pages: [pageTwo, pageOne] }));
+      expect(useProjectStore.getState().activePageId).toBe("pg-1");
+      expect(selectActivePage(useProjectStore.getState())?.id).toBe("pg-1");
+    });
+
+    it("preserves an existing valid active page when replacing the current project", () => {
+      const pageOne = makePage({ id: "pg-1", order: 1 });
+      const pageTwo = makePage({ id: "pg-2", order: 2 });
+      useProjectStore.getState().setCurrentProject(makeProject({ pages: [pageOne, pageTwo] }));
+      useProjectStore.getState().setActivePage("pg-2");
+      useProjectStore
+        .getState()
+        .setCurrentProject(makeProject({ name: "Updated", pages: [pageOne, pageTwo] }));
+      expect(useProjectStore.getState().activePageId).toBe("pg-2");
+    });
+
     it("sets current project to null", () => {
       useProjectStore.getState().setCurrentProject(makeProject());
       useProjectStore.getState().setCurrentProject(null);
       expect(useProjectStore.getState().currentProject).toBeNull();
+      expect(useProjectStore.getState().activePageId).toBeNull();
     });
   });
 
@@ -110,11 +131,32 @@ describe("projectStore", () => {
     });
   });
 
+  describe("setActivePage", () => {
+    it("sets the active page to an existing page", () => {
+      const pageOne = makePage({ id: "pg-1" });
+      const pageTwo = makePage({ id: "pg-2" });
+      useProjectStore.getState().setCurrentProject(makeProject({ pages: [pageOne, pageTwo] }));
+      useProjectStore.getState().setActivePage("pg-2");
+      expect(useProjectStore.getState().activePageId).toBe("pg-2");
+      expect(selectActivePage(useProjectStore.getState())?.id).toBe("pg-2");
+    });
+
+    it("falls back to a valid active page for an unknown page id", () => {
+      useProjectStore
+        .getState()
+        .setCurrentProject(makeProject({ pages: [makePage({ id: "pg-1" })] }));
+      useProjectStore.getState().setActivePage("missing");
+      expect(useProjectStore.getState().activePageId).toBe("pg-1");
+      expect(selectActivePage(useProjectStore.getState())?.id).toBe("pg-1");
+    });
+  });
+
   describe("addPage", () => {
     it("adds a page to the current project", () => {
       useProjectStore.getState().setCurrentProject(makeProject());
       useProjectStore.getState().addPage(makePage());
       expect(useProjectStore.getState().currentProject?.pages).toHaveLength(1);
+      expect(useProjectStore.getState().activePageId).toBe("page-1");
     });
 
     it("does nothing if no current project", () => {
@@ -129,6 +171,25 @@ describe("projectStore", () => {
       useProjectStore.getState().setCurrentProject(makeProject({ pages: [page] }));
       useProjectStore.getState().removePage("pg-1");
       expect(useProjectStore.getState().currentProject?.pages).toHaveLength(0);
+      expect(useProjectStore.getState().activePageId).toBeNull();
+    });
+
+    it("selects another valid page when removing the active page", () => {
+      const pageOne = makePage({ id: "pg-1", order: 1 });
+      const pageTwo = makePage({ id: "pg-2", order: 2 });
+      useProjectStore.getState().setCurrentProject(makeProject({ pages: [pageOne, pageTwo] }));
+      useProjectStore.getState().removePage("pg-1");
+      expect(useProjectStore.getState().activePageId).toBe("pg-2");
+      expect(selectActivePage(useProjectStore.getState())?.id).toBe("pg-2");
+    });
+
+    it("keeps active page when removing a different page", () => {
+      const pageOne = makePage({ id: "pg-1", order: 1 });
+      const pageTwo = makePage({ id: "pg-2", order: 2 });
+      useProjectStore.getState().setCurrentProject(makeProject({ pages: [pageOne, pageTwo] }));
+      useProjectStore.getState().setActivePage("pg-2");
+      useProjectStore.getState().removePage("pg-1");
+      expect(useProjectStore.getState().activePageId).toBe("pg-2");
     });
 
     it("does nothing if no current project", () => {
@@ -142,9 +203,7 @@ describe("projectStore", () => {
       const page = makePage({ id: "pg-1", name: "Old" });
       useProjectStore.getState().setCurrentProject(makeProject({ pages: [page] }));
       useProjectStore.getState().updatePage("pg-1", { name: "New" });
-      const updated = useProjectStore.getState().currentProject?.pages.find(
-        (p) => p.id === "pg-1",
-      );
+      const updated = useProjectStore.getState().currentProject?.pages.find((p) => p.id === "pg-1");
       expect(updated?.name).toBe("New");
     });
 

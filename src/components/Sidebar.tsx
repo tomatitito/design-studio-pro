@@ -9,9 +9,10 @@ import {
   resolveImageBorderStyle,
   type ImageBorderStyleId,
 } from "../canvas";
-import { useProjectStore, useUIStore, type Panel } from "../stores";
+import { selectActivePage, useProjectStore, useUIStore, type Panel } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
 import { AssetLibrary } from "./AssetLibrary";
+import type { Page } from "../types";
 
 const PANELS: { id: Panel; label: string }[] = [
   { id: "layers", label: "Layers" },
@@ -26,14 +27,23 @@ export function Sidebar() {
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const currentProject = useProjectStore((s) => s.currentProject);
+  const activePageId = useProjectStore((s) => s.activePageId);
   const selectedElementIds = useUIStore((s) => s.selectedElementIds);
+  const setActivePage = useProjectStore((s) => s.setActivePage);
+  const addPage = useProjectStore((s) => s.addPage);
+  const removePage = useProjectStore((s) => s.removePage);
   const updatePage = useProjectStore((s) => s.updatePage);
   const setDirty = useProjectStore((s) => s.setDirty);
   const canvas = useCanvasStore((s) => s.canvas);
   const [borderColor, setBorderColor] = useState("#000000");
   const [borderWidth, setBorderWidth] = useState(2);
   const [borderStyle, setBorderStyle] = useState<ImageBorderStyleId>("custom");
-  const currentPage = currentProject?.pages[0] ?? null;
+  const currentPage = useProjectStore(selectActivePage);
+  const orderedPages = useMemo(
+    () => [...(currentProject?.pages ?? [])].sort((a, b) => a.order - b.order),
+    [currentProject?.pages],
+  );
+  const canDeletePages = orderedPages.length > 1;
   const activeSolidColor = useMemo(() => {
     if (!currentPage) return "#ffffff";
     return currentPage.backgroundColor.startsWith("#") ? currentPage.backgroundColor : "#ffffff";
@@ -45,18 +55,47 @@ export function Sidebar() {
     setDirty(true);
   };
 
+  const createPageId = () => {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+      return crypto.randomUUID();
+    }
+    return `page-${Date.now()}`;
+  };
+
+  const handleAddPage = () => {
+    if (!currentProject) return;
+    const nextPageNumber = orderedPages.length + 1;
+    const nextOrder = orderedPages[orderedPages.length - 1]?.order ?? -1;
+    const page: Page = {
+      id: createPageId(),
+      name: `Page ${nextPageNumber}`,
+      elements: [],
+      width: currentProject.settings.width,
+      height: currentProject.settings.height,
+      backgroundColor: "#ffffff",
+      order: nextOrder + 1,
+    };
+
+    addPage(page);
+    setActivePage(page.id);
+    setDirty(true);
+  };
+
+  const handleSelectPage = (pageId: string) => {
+    if (pageId === activePageId) return;
+    setActivePage(pageId);
+  };
+
+  const handleDeletePage = (pageId: string) => {
+    if (!canDeletePages) return;
+    removePage(pageId);
+    setDirty(true);
+  };
+
   const applyImageBorder = (mode: "selected" | "all") => {
     if (!currentPage) return;
-    const resolvedStyle = resolveImageBorderStyle(
-      borderStyle,
-      borderColor,
-      borderWidth,
-    );
-    const targetIds = collectTargetImageIds(
-      currentPage.elements,
-      mode,
-      selectedElementIds,
-    );
+    const resolvedStyle = resolveImageBorderStyle(borderStyle, borderColor, borderWidth);
+    const targetIds = collectTargetImageIds(currentPage.elements, mode, selectedElementIds);
     if (targetIds.length === 0) return;
 
     const elements = applyBorderToImageElements(currentPage.elements, {
@@ -262,7 +301,88 @@ export function Sidebar() {
           </div>
         )}
 
-        {activePanel === "pages" && <div className="p-3 text-xs text-neutral-500">Pages panel</div>}
+        {activePanel === "pages" && (
+          <div className="flex h-full flex-col p-3 text-xs text-neutral-300">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                Pages
+              </div>
+              <button
+                type="button"
+                onClick={handleAddPage}
+                disabled={!currentProject}
+                className="rounded border border-blue-500/70 bg-blue-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:bg-neutral-800 disabled:text-neutral-500"
+                data-testid="add-page-button"
+              >
+                Add Page
+              </button>
+            </div>
+
+            {!currentProject && (
+              <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-neutral-500">
+                No project loaded.
+              </div>
+            )}
+
+            {currentProject && orderedPages.length === 0 && (
+              <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-neutral-500">
+                No pages yet. Add a page to get started.
+              </div>
+            )}
+
+            {currentProject && orderedPages.length > 0 && (
+              <div className="space-y-2 overflow-y-auto pr-1" data-testid="pages-list">
+                {orderedPages.map((page, index) => {
+                  const isActive = page.id === activePageId;
+                  return (
+                    <div
+                      key={page.id}
+                      className={`rounded-lg border p-2 transition ${
+                        isActive
+                          ? "border-blue-400 bg-blue-500/15"
+                          : "border-neutral-700 bg-neutral-900/60"
+                      }`}
+                      data-testid={`page-item-${page.id}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPage(page.id)}
+                        className="w-full text-left"
+                        aria-current={isActive ? "page" : undefined}
+                        data-testid={`select-page-${page.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-white">{page.name}</span>
+                          {isActive && (
+                            <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-200">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-[10px] text-neutral-500">
+                          Page {index + 1} · {page.width} × {page.height}
+                        </div>
+                      </button>
+
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePage(page.id)}
+                          disabled={!canDeletePages}
+                          className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:text-neutral-600 disabled:hover:border-neutral-700"
+                          data-testid={`delete-page-${page.id}`}
+                          title={canDeletePages ? "Delete page" : "Cannot delete the final page"}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

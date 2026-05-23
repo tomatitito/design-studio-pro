@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, type DragEvent } from "react";
 import { Canvas as FabricCanvas } from "fabric";
 import { invoke } from "@tauri-apps/api/core";
-import { useUIStore, useProjectStore } from "../stores";
+import { useUIStore, useProjectStore, getActiveProjectPage } from "../stores";
 import { useCanvasStore, useCanvasStoreApi } from "./CanvasContext";
 import {
   attachCanvasHandlers,
@@ -17,6 +17,7 @@ import {
   getDroppedImageFiles,
   addImageToCanvas,
   screenToCanvas,
+  renderPageContent,
 } from "../canvas";
 import type { Rect } from "fabric";
 import type { Project, Asset } from "../types";
@@ -53,12 +54,14 @@ export function Canvas() {
   const sheetRef = useRef<Rect | null>(null);
   const sheetSizeRef = useRef<{ width: number; height: number } | null>(null);
   const projectIdRef = useRef<string | null>(null);
+  const renderVersionRef = useRef(0);
   const shouldAutoFitOnNextResizeRef = useRef(true);
   const storeApi = useCanvasStoreApi();
   const canvas = useCanvasStore((s) => s.canvas);
   const zoom = useUIStore((s) => s.zoom);
   const panOffset = useUIStore((s) => s.panOffset);
   const currentProject = useProjectStore((s) => s.currentProject);
+  const activePageId = useProjectStore((s) => s.activePageId);
 
   const handleResize = useCallback((fabricCanvas: FabricCanvas) => {
     const container = containerRef.current;
@@ -125,12 +128,21 @@ export function Canvas() {
       useProjectStore.getState().setCurrentProject(DEFAULT_PROJECT);
       project = DEFAULT_PROJECT;
     }
-    const { width, height } = project.settings;
-    const background = project.pages[0]?.backgroundColor ?? "#ffffff";
+    const activePage = getActiveProjectPage(project, useProjectStore.getState().activePageId);
+    const width = activePage?.width ?? project.settings.width;
+    const height = activePage?.height ?? project.settings.height;
+    const background = activePage?.backgroundColor ?? "#ffffff";
     sheetRef.current = createPageSheet(fabricCanvas, width, height, background);
     sheetSizeRef.current = { width, height };
     projectIdRef.current = project.id;
     fitSheetInView(fabricCanvas, sheetRef.current);
+    const initialRenderVersion = renderVersionRef.current + 1;
+    renderVersionRef.current = initialRenderVersion;
+    void renderPageContent(
+      fabricCanvas,
+      activePage,
+      () => renderVersionRef.current === initialRenderVersion,
+    );
     shouldAutoFitOnNextResizeRef.current = true;
 
     return () => {
@@ -140,6 +152,7 @@ export function Canvas() {
       detachUndoRedoShortcuts();
       detachKeyboardShortcuts();
       detachSmartGuides();
+      renderVersionRef.current += 1;
       resizeObserver.disconnect();
       storeApi.getState().setCanvas(null);
       fabricCanvas.dispose();
@@ -163,17 +176,18 @@ export function Canvas() {
     canvas.requestRenderAll();
   }, [canvas, panOffset]);
 
-  // Sync page sheet when project settings change
+  // Sync page sheet and page content when the active page/project changes.
   useEffect(() => {
     if (!canvas || !currentProject || !sheetRef.current) return;
-    const { width, height } = currentProject.settings;
-    const background = currentProject.pages[0]?.backgroundColor ?? "#ffffff";
+
+    const activePage = getActiveProjectPage(currentProject, activePageId);
+    const width = activePage?.width ?? currentProject.settings.width;
+    const height = activePage?.height ?? currentProject.settings.height;
+    const background = activePage?.backgroundColor ?? "#ffffff";
     const previousSize = sheetSizeRef.current;
     const previousProjectId = projectIdRef.current;
     const sizeChanged =
-      !previousSize ||
-      previousSize.width !== width ||
-      previousSize.height !== height;
+      !previousSize || previousSize.width !== width || previousSize.height !== height;
     const projectChanged = previousProjectId !== currentProject.id;
 
     updatePageSheet(canvas, sheetRef.current, width, height, background);
@@ -184,7 +198,11 @@ export function Canvas() {
       fitSheetInView(canvas, sheetRef.current);
       shouldAutoFitOnNextResizeRef.current = true;
     }
-  }, [canvas, currentProject]);
+
+    const renderVersion = renderVersionRef.current + 1;
+    renderVersionRef.current = renderVersion;
+    void renderPageContent(canvas, activePage, () => renderVersionRef.current === renderVersion);
+  }, [canvas, currentProject, activePageId]);
 
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
