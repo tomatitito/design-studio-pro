@@ -26,6 +26,7 @@ pub fn run() {
             commands::project::create_project,
             commands::project::get_project_info,
             commands::project::save_project,
+            commands::project::save_project_data,
             commands::project::load_project,
             // Canvas commands
             commands::canvas::add_element,

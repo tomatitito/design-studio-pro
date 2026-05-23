@@ -14,7 +14,9 @@ pub use assets::{delete_asset, generate_thumbnail, import_asset, list_assets, As
 pub use canvas::{add_element, get_elements, remove_element, update_element, CanvasStore};
 pub use filesystem::{create_directory, list_directory, read_text_file, write_text_file};
 pub use pdf::export_pdf;
-pub use project::{create_project, get_project_info, load_project, save_project, ProjectStore};
+pub use project::{
+    create_project, get_project_info, load_project, save_project, save_project_data, ProjectStore,
+};
 
 /// Greet command to verify the IPC bridge works.
 ///

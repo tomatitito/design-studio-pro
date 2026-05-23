@@ -105,6 +105,34 @@ pub fn save_project(
     project_io::save_project(&output_path, project, &assets)
 }
 
+/// Saves explicit project data from the frontend to a .dsproj file.
+#[tauri::command]
+pub fn save_project_data(
+    project: Project,
+    output_path: String,
+    project_store: State<ProjectStore>,
+    asset_store: State<AssetStore>,
+) -> Result<(), String> {
+    let assets = asset_store
+        .assets
+        .lock()
+        .map_err(|e| format!("Failed to acquire asset lock: {}", e))?;
+
+    project_io::save_project(&output_path, &project, &assets)?;
+
+    let mut projects = project_store
+        .projects
+        .lock()
+        .map_err(|e| format!("Failed to acquire project lock: {}", e))?;
+    if let Some(existing) = projects.iter_mut().find(|p| p.id == project.id) {
+        *existing = project;
+    } else {
+        projects.push(project);
+    }
+
+    Ok(())
+}
+
 /// Loads a project from a .dsproj file.
 ///
 /// The `extract_dir` specifies where asset files should be extracted to.

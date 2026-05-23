@@ -2,6 +2,7 @@ import { useUIStore, useHistoryStore, useProjectStore, type Tool } from "../stor
 import { useCanvasStore } from "./CanvasContext";
 import { restoreSnapshot, importImageViaDialog, addImageToCanvas, PAGE_PRESETS, fitSheetInView, clampPanToSheet, exportPdf } from "../canvas";
 import type { Rect } from "fabric";
+import { saveProjectAs } from "../projectFiles";
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -121,6 +122,18 @@ export function Toolbar() {
     setSelectedTool(toolId);
   };
 
+  const handleSaveProject = () => {
+    if (!currentProject) return;
+    void saveProjectAs(currentProject)
+      .then((outputPath) => {
+        if (outputPath) {
+          useProjectStore.getState().setDirty(false);
+          console.info("[project] saved to", outputPath);
+        }
+      })
+      .catch((err) => console.error("[project] save failed:", err));
+  };
+
   const handleExportPdf = () => {
     if (!canvas) return;
     void exportPdf(canvas);
@@ -223,7 +236,16 @@ export function Toolbar() {
       {/* Separator */}
       <div className="mx-2 h-5 w-px bg-neutral-600" />
 
-      {/* Export */}
+      {/* Save / Export */}
+      <button
+        onClick={handleSaveProject}
+        disabled={!currentProject}
+        className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        title="Save Project"
+        data-testid="save-project"
+      >
+        Save Project
+      </button>
       <button
         onClick={handleExportPdf}
         className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
