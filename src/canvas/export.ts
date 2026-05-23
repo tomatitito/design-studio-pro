@@ -6,7 +6,8 @@ import { pxToMm } from "./sheet";
 import { getElementId } from "./handlers";
 import { resolveImageBorderStyle, type ImageBorderStyleId } from "./imageBorders";
 import { getActiveProjectPage, useProjectStore } from "../stores";
-import type { ImageElement } from "../types";
+import type { ImageElement, Page, Project } from "../types";
+import { normalizeProjectElementCoordinates } from "../projectCoordinates";
 
 /** Configuration for a PDF page. */
 export interface PdfPageConfig {
@@ -29,9 +30,15 @@ export interface PdfImageElement {
 }
 
 /** Request structure for PDF export. */
-export interface PdfExportRequest {
+export interface PdfPageExport {
   page: PdfPageConfig;
   images: PdfImageElement[];
+}
+
+export interface PdfExportRequest {
+  page?: PdfPageConfig;
+  images?: PdfImageElement[];
+  pages?: PdfPageExport[];
   outputPath: string;
 }
 
@@ -116,6 +123,44 @@ export function collectExportData(
   };
 }
 
+function collectPageExportData(page: Page, project: Project): PdfPageExport {
+  const unit = project.settings.unit;
+  const images = page.elements
+    .filter((element): element is ImageElement => element.elementType === "image" && element.visible)
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .map((element) => ({
+      imagePath: element.src,
+      xMm: pxToMm(element.position.x),
+      yMm: pxToMm(element.position.y),
+      widthMm: pxToMm(element.size.width),
+      heightMm: pxToMm(element.size.height),
+      rotationDeg: element.rotation,
+      ...resolvePdfImageBorder(element),
+    }));
+
+  return {
+    page: {
+      widthMm: toMm(page.width || project.settings.width, unit),
+      heightMm: toMm(page.height || project.settings.height, unit),
+      background: page.backgroundColor,
+    },
+    images,
+  };
+}
+
+export function collectProjectExportData(
+  canvas: FabricCanvas,
+  project: Project,
+): Omit<PdfExportRequest, "outputPath"> {
+  void canvas;
+  const normalizedProject = normalizeProjectElementCoordinates(project);
+  const pages = [...normalizedProject.pages]
+    .sort((a, b) => a.order - b.order)
+    .map((page) => collectPageExportData(page, normalizedProject));
+
+  return { pages };
+}
+
 const VALID_BORDER_STYLE_IDS = new Set<ImageBorderStyleId>([
   "custom",
   "matte-frame",
@@ -193,11 +238,15 @@ export async function exportPdf(canvas: FabricCanvas): Promise<void> {
 
   if (!outputPath) return;
 
-  const pageBackground = getActiveProjectPage(
-    project,
-    useProjectStore.getState().activePageId,
-  )?.backgroundColor;
-  const data = collectExportData(canvas, widthMm, heightMm, pageBackground);
+  const data =
+    project.pages.length > 1
+      ? collectProjectExportData(canvas, project)
+      : collectExportData(
+          canvas,
+          widthMm,
+          heightMm,
+          getActiveProjectPage(project, useProjectStore.getState().activePageId)?.backgroundColor,
+        );
   const request: PdfExportRequest = { ...data, outputPath };
 
   try {

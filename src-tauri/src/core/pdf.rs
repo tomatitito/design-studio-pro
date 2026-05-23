@@ -37,13 +37,46 @@ pub struct PdfImageElement {
     pub border_width: Option<f64>,
 }
 
+/// A single page in a PDF export request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPageExport {
+    pub page: PdfPageConfig,
+    pub images: Vec<PdfImageElement>,
+}
+
 /// Request structure for PDF export.
+///
+/// `page`/`images` are kept for backward-compatible single-page callers.
+/// New multi-page callers should populate `pages`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PdfExportRequest {
-    pub page: PdfPageConfig,
+    #[serde(default)]
+    pub page: Option<PdfPageConfig>,
+    #[serde(default)]
     pub images: Vec<PdfImageElement>,
+    #[serde(default)]
+    pub pages: Vec<PdfPageExport>,
     pub output_path: String,
+}
+
+impl PdfExportRequest {
+    fn resolved_pages(&self) -> Result<Vec<PdfPageExport>, String> {
+        if !self.pages.is_empty() {
+            return Ok(self.pages.clone());
+        }
+
+        let page = self
+            .page
+            .clone()
+            .ok_or_else(|| "PDF export request must include page or pages".to_string())?;
+
+        Ok(vec![PdfPageExport {
+            page,
+            images: self.images.clone(),
+        }])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -360,145 +393,129 @@ fn draw_image_border(
 ///
 /// The input coordinates use a top-left origin (typical for design tools),
 /// but PDF uses a bottom-left origin. This function handles the conversion.
-pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
-    let (doc, page1, layer1) = PdfDocument::new(
-        "Design Studio Pro Export",
-        Mm(request.page.width_mm as f32),
-        Mm(request.page.height_mm as f32),
-        "Layer 1",
-    );
-
-    let current_layer = doc.get_page(page1).get_layer(layer1);
-    add_background_to_layer(&current_layer, &request.page);
-
-    for img_elem in &request.images {
+fn add_images_to_layer(
+    current_layer: &PdfLayerReference,
+    page: &PdfPageConfig,
+    images: &[PdfImageElement],
+) -> Result<(), String> {
+    for img_elem in images {
         let image_bytes = std::fs::read(&img_elem.image_path)
             .map_err(|e| format!("Failed to read image {}: {}", img_elem.image_path, e))?;
 
         let path_lower = img_elem.image_path.to_lowercase();
         let is_jpeg = path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg");
-
-        if is_jpeg {
+        let (width_px, height_px, image_xobject) = if is_jpeg {
             let img = ::image::ImageReader::new(Cursor::new(&image_bytes))
                 .with_guessed_format()
                 .map_err(|e| format!("Failed to create image reader: {}", e))?
                 .decode()
                 .map_err(|e| format!("Failed to decode JPEG image: {}", e))?;
-
             let width_px = img.width();
             let height_px = img.height();
-            let image_xobject = ImageXObject {
-                width: Px(width_px as usize),
-                height: Px(height_px as usize),
-                color_space: ColorSpace::Rgb,
-                bits_per_component: ColorBits::Bit8,
-                interpolate: true,
-                image_data: image_bytes,
-                image_filter: Some(ImageFilter::DCT),
-                clipping_bbox: None,
-                smask: None,
-            };
-
-            let pdf_image = Image::from(image_xobject);
-            let y_pdf = request.page.height_mm - img_elem.y_mm - img_elem.height_mm;
-
-            pdf_image.add_to_layer(
-                current_layer.clone(),
-                ImageTransform {
-                    translate_x: Some(Mm(img_elem.x_mm as f32)),
-                    translate_y: Some(Mm(y_pdf as f32)),
-                    rotate: if img_elem.rotation_deg != 0.0 {
-                        Some(ImageRotation {
-                            angle_ccw_degrees: img_elem.rotation_deg as f32,
-                            rotation_center_x: Px(0),
-                            rotation_center_y: Px(0),
-                        })
-                    } else {
-                        None
-                    },
-                    scale_x: Some({
-                        let img_width_mm = width_px as f64 * 25.4 / 72.0;
-                        (img_elem.width_mm / img_width_mm) as f32
-                    }),
-                    scale_y: Some({
-                        let img_height_mm = height_px as f64 * 25.4 / 72.0;
-                        (img_elem.height_mm / img_height_mm) as f32
-                    }),
-                    dpi: Some(72.0),
-                    ..Default::default()
+            (
+                width_px,
+                height_px,
+                ImageXObject {
+                    width: Px(width_px as usize),
+                    height: Px(height_px as usize),
+                    color_space: ColorSpace::Rgb,
+                    bits_per_component: ColorBits::Bit8,
+                    interpolate: true,
+                    image_data: image_bytes,
+                    image_filter: Some(ImageFilter::DCT),
+                    clipping_bbox: None,
+                    smask: None,
                 },
-            );
-            if let Some((border_color, border_width_mm)) = resolve_border_for_pdf(img_elem) {
-                draw_image_border(
-                    &current_layer,
-                    &request.page,
-                    img_elem,
-                    border_color,
-                    border_width_mm,
-                );
-            }
+            )
         } else {
             let img = ::image::ImageReader::new(Cursor::new(&image_bytes))
                 .with_guessed_format()
                 .map_err(|e| format!("Failed to create image reader: {}", e))?
                 .decode()
                 .map_err(|e| format!("Failed to decode image: {}", e))?;
-
             let rgb_img = img.to_rgb8();
             let width_px = rgb_img.width();
             let height_px = rgb_img.height();
-            let raw_pixels = rgb_img.into_raw();
-            let image_xobject = ImageXObject {
-                width: Px(width_px as usize),
-                height: Px(height_px as usize),
-                color_space: ColorSpace::Rgb,
-                bits_per_component: ColorBits::Bit8,
-                interpolate: true,
-                image_data: raw_pixels,
-                image_filter: None,
-                clipping_bbox: None,
-                smask: None,
-            };
-
-            let pdf_image = Image::from(image_xobject);
-            let y_pdf = request.page.height_mm - img_elem.y_mm - img_elem.height_mm;
-
-            pdf_image.add_to_layer(
-                current_layer.clone(),
-                ImageTransform {
-                    translate_x: Some(Mm(img_elem.x_mm as f32)),
-                    translate_y: Some(Mm(y_pdf as f32)),
-                    rotate: if img_elem.rotation_deg != 0.0 {
-                        Some(ImageRotation {
-                            angle_ccw_degrees: img_elem.rotation_deg as f32,
-                            rotation_center_x: Px(0),
-                            rotation_center_y: Px(0),
-                        })
-                    } else {
-                        None
-                    },
-                    scale_x: Some({
-                        let img_width_mm = width_px as f64 * 25.4 / 72.0;
-                        (img_elem.width_mm / img_width_mm) as f32
-                    }),
-                    scale_y: Some({
-                        let img_height_mm = height_px as f64 * 25.4 / 72.0;
-                        (img_elem.height_mm / img_height_mm) as f32
-                    }),
-                    dpi: Some(72.0),
-                    ..Default::default()
+            (
+                width_px,
+                height_px,
+                ImageXObject {
+                    width: Px(width_px as usize),
+                    height: Px(height_px as usize),
+                    color_space: ColorSpace::Rgb,
+                    bits_per_component: ColorBits::Bit8,
+                    interpolate: true,
+                    image_data: rgb_img.into_raw(),
+                    image_filter: None,
+                    clipping_bbox: None,
+                    smask: None,
                 },
-            );
-            if let Some((border_color, border_width_mm)) = resolve_border_for_pdf(img_elem) {
-                draw_image_border(
-                    &current_layer,
-                    &request.page,
-                    img_elem,
-                    border_color,
-                    border_width_mm,
-                );
-            }
+            )
+        };
+
+        let pdf_image = Image::from(image_xobject);
+        let y_pdf = page.height_mm - img_elem.y_mm - img_elem.height_mm;
+
+        pdf_image.add_to_layer(
+            current_layer.clone(),
+            ImageTransform {
+                translate_x: Some(Mm(img_elem.x_mm as f32)),
+                translate_y: Some(Mm(y_pdf as f32)),
+                rotate: if img_elem.rotation_deg != 0.0 {
+                    Some(ImageRotation {
+                        angle_ccw_degrees: img_elem.rotation_deg as f32,
+                        rotation_center_x: Px(0),
+                        rotation_center_y: Px(0),
+                    })
+                } else {
+                    None
+                },
+                scale_x: Some({
+                    let img_width_mm = width_px as f64 * 25.4 / 72.0;
+                    (img_elem.width_mm / img_width_mm) as f32
+                }),
+                scale_y: Some({
+                    let img_height_mm = height_px as f64 * 25.4 / 72.0;
+                    (img_elem.height_mm / img_height_mm) as f32
+                }),
+                dpi: Some(72.0),
+                ..Default::default()
+            },
+        );
+        if let Some((border_color, border_width_mm)) = resolve_border_for_pdf(img_elem) {
+            draw_image_border(current_layer, page, img_elem, border_color, border_width_mm);
         }
+    }
+
+    Ok(())
+}
+
+pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
+    let pages = request.resolved_pages()?;
+    let first = pages
+        .first()
+        .ok_or_else(|| "PDF export request contains no pages".to_string())?;
+
+    let (doc, page1, layer1) = PdfDocument::new(
+        "Design Studio Pro Export",
+        Mm(first.page.width_mm as f32),
+        Mm(first.page.height_mm as f32),
+        "Layer 1",
+    );
+
+    let current_layer = doc.get_page(page1).get_layer(layer1);
+    add_background_to_layer(&current_layer, &first.page);
+    add_images_to_layer(&current_layer, &first.page, &first.images)?;
+
+    for page_export in pages.iter().skip(1) {
+        let (page, layer) = doc.add_page(
+            Mm(page_export.page.width_mm as f32),
+            Mm(page_export.page.height_mm as f32),
+            "Layer 1",
+        );
+        let current_layer = doc.get_page(page).get_layer(layer);
+        add_background_to_layer(&current_layer, &page_export.page);
+        add_images_to_layer(&current_layer, &page_export.page, &page_export.images)?;
     }
 
     let file = File::create(&request.output_path)
@@ -521,12 +538,13 @@ mod tests {
         let output_path = output.path().to_str().unwrap().to_string();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
                 background: Some("#ffffff".to_string()),
-            },
+            }),
             images: vec![],
+            pages: vec![],
             output_path: output_path.clone(),
         };
 
@@ -559,11 +577,11 @@ mod tests {
         let output_path = output.path().to_str().unwrap().to_string();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
                 background: Some("sunset-bloom".to_string()),
-            },
+            }),
             images: vec![PdfImageElement {
                 image_path: test_image_path,
                 x_mm: 10.0,
@@ -575,6 +593,7 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            pages: vec![],
             output_path: output_path.clone(),
         };
 
@@ -606,11 +625,11 @@ mod tests {
         let output_path = output.path().to_str().unwrap().to_string();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 100.0,
                 height_mm: 100.0,
                 background: Some("#ffffff".to_string()),
-            },
+            }),
             images: vec![PdfImageElement {
                 image_path: test_image_path,
                 x_mm: 0.0,
@@ -622,6 +641,7 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            pages: vec![],
             output_path: output_path.clone(),
         };
 
@@ -638,12 +658,13 @@ mod tests {
         let output_path = output.path().to_str().unwrap().to_string();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
                 background: Some("#ffffff".to_string()),
-            },
+            }),
             images: vec![],
+            pages: vec![],
             output_path: output_path.clone(),
         };
 

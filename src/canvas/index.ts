@@ -26,7 +26,7 @@ export type { PagePreset } from "./sheet";
 export { BACKGROUND_PRESETS, getBackgroundPreviewStyle } from "../backgrounds";
 export { collectExportData, exportPdf } from "./export";
 export { renderPageContent } from "./pageRenderer";
-export type { PdfPageConfig, PdfImageElement, PdfExportRequest } from "./export";
+export type { PdfPageConfig, PdfImageElement, PdfPageExport, PdfExportRequest } from "./export";
 export {
   applyBorderToImageElements,
   applyBorderToCanvasObjects,

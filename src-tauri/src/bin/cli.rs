@@ -1,5 +1,7 @@
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
-use design_studio_pro_lib::core::pdf::{self, PdfExportRequest, PdfImageElement, PdfPageConfig};
+use design_studio_pro_lib::core::pdf::{
+    self, PdfExportRequest, PdfImageElement, PdfPageConfig, PdfPageExport,
+};
 use design_studio_pro_lib::core::project_io;
 use design_studio_pro_lib::models::{
     Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position, Project,
@@ -772,38 +774,53 @@ fn cmd_export_pdf(
         let loaded = project_io::load_project(&proj_path, extract_dir.path().to_str().unwrap())?;
 
         let proj = &loaded.manifest.project;
-        let page = proj.pages.first().ok_or("Project has no pages")?;
+        if proj.pages.is_empty() {
+            return Err("Project has no pages".to_string());
+        }
 
-        let pdf_images: Vec<PdfImageElement> = page
-            .elements
+        let mut ordered_pages = proj.pages.clone();
+        ordered_pages.sort_by_key(|p| p.order);
+        let pages: Vec<PdfPageExport> = ordered_pages
             .iter()
-            .filter_map(|el| {
-                if let ElementType::Image { ref src, .. } = el.element_type {
-                    // Resolve image path: check extracted assets first, then original
-                    let resolved_path = loaded
-                        .manifest
-                        .assets
-                        .iter()
-                        .find(|a| {
-                            Path::new(&a.file_path).file_name().and_then(|n| n.to_str())
-                                == Path::new(src).file_name().and_then(|n| n.to_str())
-                        })
-                        .map(|a| a.file_path.clone())
-                        .unwrap_or_else(|| src.clone());
-                    build_pdf_image_from_project_element(resolved_path, el)
-                } else {
-                    None
+            .map(|page| {
+                let pdf_images: Vec<PdfImageElement> = page
+                    .elements
+                    .iter()
+                    .filter_map(|el| {
+                        if let ElementType::Image { ref src, .. } = el.element_type {
+                            // Resolve image path: check extracted assets first, then original
+                            let resolved_path = loaded
+                                .manifest
+                                .assets
+                                .iter()
+                                .find(|a| {
+                                    Path::new(&a.file_path).file_name().and_then(|n| n.to_str())
+                                        == Path::new(src).file_name().and_then(|n| n.to_str())
+                                })
+                                .map(|a| a.file_path.clone())
+                                .unwrap_or_else(|| src.clone());
+                            build_pdf_image_from_project_element(resolved_path, el)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                PdfPageExport {
+                    page: PdfPageConfig {
+                        width_mm: page.width,
+                        height_mm: page.height,
+                        background: Some(page.background_color.clone()),
+                    },
+                    images: pdf_images,
                 }
             })
             .collect();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
-                width_mm: page.width,
-                height_mm: page.height,
-                background: Some(page.background_color.clone()),
-            },
-            images: pdf_images,
+            page: None,
+            images: vec![],
+            pages,
             output_path: output.clone(),
         };
 
@@ -829,12 +846,13 @@ fn cmd_export_pdf(
         }
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: w,
                 height_mm: h,
                 background: Some(background),
-            },
+            }),
             images: pdf_images,
+            pages: vec![],
             output_path: output.clone(),
         };
 

@@ -41,12 +41,13 @@ mod tests {
         let output_path = output.path().to_str().unwrap().to_string();
 
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
                 background: Some("#ffffff".to_string()),
-            },
+            }),
             images: vec![],
+            pages: vec![],
             output_path: output_path.clone(),
         };
 
@@ -58,11 +59,11 @@ mod tests {
     #[tokio::test]
     async fn test_export_pdf_with_invalid_path() {
         let request = PdfExportRequest {
-            page: PdfPageConfig {
+            page: Some(PdfPageConfig {
                 width_mm: 210.0,
                 height_mm: 297.0,
                 background: Some("#ffffff".to_string()),
-            },
+            }),
             images: vec![PdfImageElement {
                 image_path: "/nonexistent/image.png".to_string(),
                 x_mm: 0.0,
@@ -74,6 +75,7 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            pages: vec![],
             output_path: "/tmp/test.pdf".to_string(),
         };
 
