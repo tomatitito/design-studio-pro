@@ -102,18 +102,34 @@ enum Commands {
         all_images: bool,
     },
 
-    /// Open an existing project, optionally add images, and save
+    /// Open an existing project, optionally add pages/images, and save
     #[command(
         group(
             ArgGroup::new("border_spec")
                 .args(["border_style", "border_color", "border_width"])
                 .multiple(true)
         ),
-        after_help = "Examples:\n  dsp open project.dsproj --background sunset-bloom\n  dsp open project.dsproj --border-style walnut-frame --all-images\n  dsp open project.dsproj --border-color \"#111111\" --border-width 3 --image-index 0"
+        after_help = "Examples:\n  dsp open project.dsproj --add-page --page-name \"Back Cover\"\n  dsp open project.dsproj --background sunset-bloom\n  dsp open project.dsproj --border-style walnut-frame --all-images\n  dsp open project.dsproj --border-color \"#111111\" --border-width 3 --image-index 0"
     )]
     Open {
         /// Path to .dsproj file
         project: String,
+
+        /// Add a new page to the project
+        #[arg(long = "add-page", default_value_t = false)]
+        add_page: bool,
+
+        /// Name for a newly added page
+        #[arg(long = "page-name", requires = "add_page")]
+        page_name: Option<String>,
+
+        /// Size for a newly added page: a4, letter, or WxH in mm
+        #[arg(long = "page-size", requires = "add_page")]
+        page_size: Option<String>,
+
+        /// Orientation for a newly added page: portrait or landscape
+        #[arg(long = "page-orientation", requires = "add_page")]
+        page_orientation: Option<String>,
 
         /// Image file(s) to add (repeatable)
         #[arg(long = "add-image")]
@@ -476,6 +492,70 @@ fn parse_orientation(s: &str) -> Result<Orientation, String> {
     }
 }
 
+fn resolve_page_dimensions(
+    project: &Project,
+    page_size: Option<&String>,
+    page_orientation: Option<&String>,
+) -> Result<(f64, f64), String> {
+    let orientation = match page_orientation {
+        Some(value) => parse_orientation(value)?,
+        None => project.settings.orientation.clone(),
+    };
+
+    let (w, h) = match page_size {
+        Some(value) => parse_page_size(value)?,
+        None => (project.settings.width, project.settings.height),
+    };
+
+    Ok(match orientation {
+        Orientation::Portrait => {
+            if w <= h {
+                (w, h)
+            } else {
+                (h, w)
+            }
+        }
+        Orientation::Landscape => {
+            if w >= h {
+                (w, h)
+            } else {
+                (h, w)
+            }
+        }
+    })
+}
+
+fn build_new_page(
+    project: &Project,
+    page_name: Option<String>,
+    page_size: Option<String>,
+    page_orientation: Option<String>,
+    background: Option<&String>,
+) -> Result<Page, String> {
+    let ordered_page_count = project.pages.len();
+    let next_order = project
+        .pages
+        .iter()
+        .map(|page| page.order)
+        .max()
+        .map(|order| order + 1)
+        .unwrap_or(0);
+    let (width, height) =
+        resolve_page_dimensions(project, page_size.as_ref(), page_orientation.as_ref())?;
+
+    Ok(Page {
+        id: format!("page-{}", uuid::Uuid::new_v4()),
+        name: page_name.unwrap_or_else(|| format!("Page {}", ordered_page_count + 1)),
+        elements: vec![],
+        width,
+        height,
+        background_color: background
+            .map(|value| resolve_background_spec(value))
+            .unwrap_or_else(|| "#ffffff".to_string()),
+        order: next_order,
+    })
+}
+
 fn preset_border_style(style_name: BorderStylePreset) -> BorderStyle {
     match style_name {
         BorderStylePreset::Custom => BorderStyle {
@@ -696,6 +776,10 @@ fn cmd_new(
 
 fn cmd_open(
     project_path: String,
+    add_page: bool,
+    page_name: Option<String>,
+    page_size: Option<String>,
+    page_orientation: Option<String>,
     add_image: Vec<String>,
     positions: Vec<String>,
     image_sizes: Vec<String>,
@@ -717,8 +801,22 @@ fn cmd_open(
     let border_style = resolve_border_style(border_style, border_color, border_width)?;
     let border_target = resolve_border_target(image_indices, all_images)?;
 
-    if let Some(page) = project.pages.first_mut() {
-        if let Some(background) = background {
+    let target_page_index = if add_page {
+        let page = build_new_page(
+            &project,
+            page_name,
+            page_size,
+            page_orientation,
+            background.as_ref(),
+        )?;
+        project.pages.push(page);
+        project.pages.len().checked_sub(1)
+    } else {
+        Some(0)
+    };
+
+    if let Some(page) = target_page_index.and_then(|index| project.pages.get_mut(index)) {
+        if let Some(background) = background.as_ref().filter(|_| !add_page) {
             page.background_color = resolve_background_spec(&background);
         }
         let base_index = page.elements.len();
@@ -980,6 +1078,30 @@ fn maybe_run_startup_update(command: &Commands) {
 mod tests {
     use super::*;
 
+    fn sample_project() -> Project {
+        Project {
+            id: "proj-test".to_string(),
+            name: "Test Project".to_string(),
+            pages: vec![Page {
+                id: "page-1".to_string(),
+                name: "Page 1".to_string(),
+                elements: vec![],
+                width: 210.0,
+                height: 297.0,
+                background_color: "#ffffff".to_string(),
+                order: 0,
+            }],
+            created_at: "2026-05-24T00:00:00Z".to_string(),
+            modified_at: "2026-05-24T00:00:00Z".to_string(),
+            settings: ProjectSettings {
+                width: 210.0,
+                height: 297.0,
+                orientation: Orientation::Portrait,
+                unit: MeasurementUnit::Mm,
+            },
+        }
+    }
+
     fn sample_image_element(id: &str) -> Element {
         Element {
             id: id.to_string(),
@@ -1154,6 +1276,78 @@ mod tests {
         assert_eq!(mapped.border_color.as_deref(), Some("#d4af37"));
         assert_eq!(mapped.border_width, Some(8.0));
     }
+
+    #[test]
+    fn build_new_page_uses_project_defaults() {
+        let project = sample_project();
+        let page = build_new_page(&project, None, None, None, None).unwrap();
+
+        assert_eq!(page.name, "Page 2");
+        assert_eq!(page.width, 210.0);
+        assert_eq!(page.height, 297.0);
+        assert_eq!(page.background_color, "#ffffff");
+        assert_eq!(page.order, 1);
+        assert!(page.elements.is_empty());
+    }
+
+    #[test]
+    fn build_new_page_accepts_name_size_orientation_and_background() {
+        let project = sample_project();
+        let page = build_new_page(
+            &project,
+            Some("Back Cover".to_string()),
+            Some("a4".to_string()),
+            Some("landscape".to_string()),
+            Some(&"sage".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(page.name, "Back Cover");
+        assert_eq!(page.width, 297.0);
+        assert_eq!(page.height, 210.0);
+        assert_eq!(page.background_color, "#dce8d8");
+    }
+
+    #[test]
+    fn cmd_open_adds_page_and_saves_project() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_path = temp_dir.path().join("project.dsproj");
+        let project_path_string = project_path.to_string_lossy().to_string();
+        let project = sample_project();
+        project_io::save_project(&project_path_string, &project, &[]).unwrap();
+
+        cmd_open(
+            project_path_string.clone(),
+            true,
+            Some("Page Two".to_string()),
+            Some("letter".to_string()),
+            Some("landscape".to_string()),
+            vec![],
+            vec![],
+            vec![],
+            None,
+            Some("sandstone".to_string()),
+            None,
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .unwrap();
+
+        let extract_dir = tempfile::tempdir().unwrap();
+        let loaded =
+            project_io::load_project(&project_path_string, extract_dir.path().to_str().unwrap())
+                .unwrap();
+        let saved_project = loaded.manifest.project;
+
+        assert_eq!(saved_project.pages.len(), 2);
+        assert_eq!(saved_project.pages[1].name, "Page Two");
+        assert_eq!(saved_project.pages[1].width, 279.4);
+        assert_eq!(saved_project.pages[1].height, 215.9);
+        assert_eq!(saved_project.pages[1].background_color, "#f4e7d3");
+        assert_eq!(saved_project.pages[1].order, 1);
+    }
 }
 
 fn main() {
@@ -1203,6 +1397,10 @@ fn main() {
 
         Commands::Open {
             project,
+            add_page,
+            page_name,
+            page_size,
+            page_orientation,
             add_image,
             position,
             image_size,
@@ -1215,6 +1413,10 @@ fn main() {
             all_images,
         } => cmd_open(
             project,
+            add_page,
+            page_name,
+            page_size,
+            page_orientation,
             add_image,
             position,
             image_size,

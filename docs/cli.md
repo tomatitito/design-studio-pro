@@ -118,7 +118,7 @@ dsp new --size a4 \
 
 ### `dsp open` — Open and modify a project
 
-Opens an existing `.dsproj` file, optionally adds images, and saves.
+Opens an existing `.dsproj` file, optionally adds pages/images, and saves.
 
 ```
 dsp open <PROJECT> [OPTIONS]
@@ -129,6 +129,10 @@ dsp open <PROJECT> [OPTIONS]
 | Option                | Description                                   | Default          |
 | --------------------- | --------------------------------------------- | ---------------- |
 | `<PROJECT>`           | Path to `.dsproj` file (positional, required) | —                |
+| `--add-page`          | Add a new page to the project                 | false            |
+| `--page-name <NAME>`  | Name for a newly added page                   | `Page N`         |
+| `--page-size <SIZE>`  | Size for a newly added page                   | project default  |
+| `--page-orientation <portrait\|landscape>` | Orientation for a newly added page | project default |
 | `--add-image <PATH>`  | Image file to add (repeatable)                | —                |
 | `--position <X,Y>`    | Position in mm for preceding image            | `0,0`            |
 | `--image-size <W,H>`  | Size in mm for preceding image                | auto             |
@@ -143,8 +147,20 @@ dsp open <PROJECT> [OPTIONS]
 **Examples:**
 
 ```bash
+# Add a blank page and save back
+dsp open project.dsproj --add-page
+
+# Add a named landscape page and save to a new file
+dsp open project.dsproj --add-page --page-name "Back Cover" \
+  --page-size a4 --page-orientation landscape \
+  --output updated.dsproj
+
 # Add an image and save back
 dsp open project.dsproj --add-image newphoto.jpg --position 50,50
+
+# Add a new page with an image on it
+dsp open project.dsproj --add-page --page-name "Photo Page" \
+  --add-image newphoto.jpg --position 20,20
 
 # Add an image and save to a new file
 dsp open project.dsproj --add-image logo.png --position 0,0 --output updated.dsproj
