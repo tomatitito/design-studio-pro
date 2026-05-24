@@ -1,6 +1,9 @@
-import { render, screen } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import App from "../App";
+import { useHistoryStore, useProjectStore } from "../stores";
+
+const openProjectFromDialogMock = vi.hoisted(() => vi.fn());
 
 // Mock fabric to avoid canvas API issues in test environment
 vi.mock("fabric", () => {
@@ -79,7 +82,27 @@ vi.mock("fabric", () => {
 
 vi.mock("@tauri-apps/api/core");
 
+vi.mock("../projectFiles", () => ({
+  openProjectFromDialog: openProjectFromDialogMock,
+  saveProjectAs: vi.fn(),
+}));
+
 describe("App", () => {
+  beforeEach(() => {
+    openProjectFromDialogMock.mockReset();
+    useProjectStore.setState({
+      currentProject: null,
+      projects: [],
+      activePageId: null,
+      isDirty: false,
+    });
+    useHistoryStore.setState({
+      past: [],
+      present: null,
+      future: [],
+    });
+  });
+
   it("renders the toolbar", () => {
     render(<App />);
     expect(screen.getByTestId("toolbar")).toBeInTheDocument();
@@ -108,6 +131,44 @@ describe("App", () => {
     expect(screen.getByTestId("zoom-in")).toBeInTheDocument();
     expect(screen.getByTestId("zoom-out")).toBeInTheDocument();
     expect(screen.getByTestId("zoom-level")).toBeInTheDocument();
+  });
+
+  it("opens a saved project from the toolbar", async () => {
+    useProjectStore.getState().setDirty(true);
+    useHistoryStore.getState().push({ pageId: "old-page" });
+    openProjectFromDialogMock.mockResolvedValue({
+      id: "opened-project",
+      name: "Opened Project",
+      pages: [
+        {
+          id: "opened-page",
+          name: "Opened Page",
+          elements: [],
+          width: 210,
+          height: 297,
+          backgroundColor: "#ffffff",
+          order: 0,
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00Z",
+      modifiedAt: "2026-01-01T00:00:00Z",
+      settings: {
+        width: 210,
+        height: 297,
+        orientation: "portrait",
+        unit: "mm",
+      },
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByTestId("open-project"));
+
+    await waitFor(() => {
+      expect(useProjectStore.getState().currentProject?.id).toBe("opened-project");
+    });
+    expect(useProjectStore.getState().activePageId).toBe("opened-page");
+    expect(useProjectStore.getState().isDirty).toBe(false);
+    expect(useHistoryStore.getState().present).toBeNull();
   });
 
   it("renders rulers", () => {

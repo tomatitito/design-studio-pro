@@ -29,15 +29,15 @@ image = "0.25"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 printpdf = "0.7"
 clap = { version = "4", features = ["derive"], optional = true }
-dirs = { version = "6", optional = true }
-flate2 = { version = "1", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
-semver = { version = "1", optional = true }
-tar = { version = "0.4", optional = true }
-tempfile = { version = "3", optional = true }
+dirs = "6"
+flate2 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+semver = "1"
+tar = "0.4"
+tempfile = "3"
 
 [features]
-cli = ["clap", "dirs", "flate2", "reqwest", "semver", "tar", "tempfile"]
+cli = ["clap"]
 
 [[bin]]
 name = "cli"

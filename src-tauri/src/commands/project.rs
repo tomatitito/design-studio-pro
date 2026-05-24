@@ -6,6 +6,8 @@ use crate::models::{MeasurementUnit, Orientation, Project, ProjectSettings};
 use crate::utils::generate_id;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::State;
 
@@ -73,10 +75,40 @@ pub fn get_project_info(project_id: String, store: State<ProjectStore>) -> Resul
 
 /// Result returned from loading a project file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoadProjectResult {
     pub project: Project,
     pub assets: Vec<crate::models::Asset>,
     pub extract_dir: String,
+}
+
+fn default_project_extract_dir(archive_path: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(archive_path.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    let project_key = Path::new(archive_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| {
+            stem.chars()
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                        ch
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>()
+        })
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "project".to_string());
+
+    std::env::temp_dir()
+        .join("design-studio-pro")
+        .join("opened-projects")
+        .join(format!("{}-{}", project_key, &hash[..12]))
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Saves the current project and its assets to a .dsproj file.
@@ -140,19 +172,24 @@ pub fn save_project_data(
 #[tauri::command]
 pub fn load_project(
     archive_path: String,
-    extract_dir: String,
+    extract_dir: Option<String>,
     project_store: State<ProjectStore>,
     asset_store: State<AssetStore>,
 ) -> Result<LoadProjectResult, String> {
+    let extract_dir = extract_dir.unwrap_or_else(|| default_project_extract_dir(&archive_path));
     let loaded = project_io::load_project(&archive_path, &extract_dir)?;
 
     // Store the loaded project
     let project = loaded.manifest.project.clone();
-    project_store
+    let mut projects = project_store
         .projects
         .lock()
-        .map_err(|e| format!("Failed to acquire project lock: {}", e))?
-        .push(project.clone());
+        .map_err(|e| format!("Failed to acquire project lock: {}", e))?;
+    if let Some(existing) = projects.iter_mut().find(|p| p.id == project.id) {
+        *existing = project.clone();
+    } else {
+        projects.push(project.clone());
+    }
 
     // Store the loaded assets
     let assets = loaded.manifest.assets.clone();
@@ -161,6 +198,7 @@ pub fn load_project(
         .lock()
         .map_err(|e| format!("Failed to acquire asset lock: {}", e))?;
 
+    asset_lock.retain(|existing| !assets.iter().any(|asset| asset.id == existing.id));
     for asset in &assets {
         asset_lock.push(asset.clone());
     }
@@ -217,6 +255,16 @@ mod tests {
             .find(|p| p.id == project_id)
             .cloned()
             .ok_or_else(|| format!("Project not found: {}", project_id))
+    }
+
+    #[test]
+    fn default_project_extract_dir_is_stable_and_sanitized() {
+        let first = default_project_extract_dir("/tmp/My Project!.dsproj");
+        let second = default_project_extract_dir("/tmp/My Project!.dsproj");
+
+        assert_eq!(first, second);
+        assert!(first.contains("design-studio-pro"));
+        assert!(first.contains("My-Project--"));
     }
 
     #[test]

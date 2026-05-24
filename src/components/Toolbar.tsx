@@ -1,8 +1,16 @@
 import { useUIStore, useHistoryStore, useProjectStore, type Tool } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
-import { restoreSnapshot, importImageViaDialog, addImageToCanvas, PAGE_PRESETS, fitSheetInView, clampPanToSheet, exportPdf } from "../canvas";
+import {
+  restoreSnapshot,
+  importImageViaDialog,
+  addImageToCanvas,
+  PAGE_PRESETS,
+  fitSheetInView,
+  clampPanToSheet,
+  exportPdf,
+} from "../canvas";
 import type { Rect } from "fabric";
-import { saveProjectAs } from "../projectFiles";
+import { openProjectFromDialog, saveProjectAs } from "../projectFiles";
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -41,9 +49,7 @@ export function Toolbar() {
 
   const getSheet = (): Rect | null => {
     if (!canvas) return null;
-    return (
-      (canvas.getObjects() as PageSheetRect[]).find((object) => object.isPageSheet) ?? null
-    );
+    return (canvas.getObjects() as PageSheetRect[]).find((object) => object.isPageSheet) ?? null;
   };
 
   const handleZoomFit = () => {
@@ -132,6 +138,18 @@ export function Toolbar() {
         }
       })
       .catch((err) => console.error("[project] save failed:", err));
+  };
+
+  const handleOpenProject = () => {
+    void openProjectFromDialog()
+      .then((project) => {
+        if (!project) return;
+        const projectStore = useProjectStore.getState();
+        projectStore.setCurrentProject(project);
+        projectStore.setDirty(false);
+        useHistoryStore.getState().clear();
+      })
+      .catch((err) => console.error("[project] open failed:", err));
   };
 
   const handleExportPdf = () => {
@@ -237,6 +255,14 @@ export function Toolbar() {
       <div className="mx-2 h-5 w-px bg-neutral-600" />
 
       {/* Save / Export */}
+      <button
+        onClick={handleOpenProject}
+        className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
+        title="Open Project"
+        data-testid="open-project"
+      >
+        Open Project
+      </button>
       <button
         onClick={handleSaveProject}
         disabled={!currentProject}
