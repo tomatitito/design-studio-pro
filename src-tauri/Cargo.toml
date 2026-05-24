@@ -1,6 +1,6 @@
 [package]
 name = "design-studio-pro"
-version = "0.1.1"
+version = "0.1.2"
 description = "Design Studio Pro"
 authors = ["you"]
 edition = "2021"
