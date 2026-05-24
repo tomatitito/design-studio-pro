@@ -40,8 +40,13 @@ tempfile = { version = "3", optional = true }
 cli = ["clap", "dirs", "flate2", "reqwest", "semver", "tar", "tempfile"]
 
 [[bin]]
-name = "dsp"
+name = "cli"
 path = "src/bin/cli.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "dsp"
+path = "src/bin/dsp.rs"
 required-features = ["cli"]
 
 [dev-dependencies]

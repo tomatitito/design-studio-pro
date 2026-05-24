@@ -17,12 +17,15 @@ jobs:
           - platform_name: windows-x86_64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
+            tauri_args: --target x86_64-pc-windows-msvc --features cli --bundles nsis
           - platform_name: macos
             runner: macos-latest
             target: ""
+            tauri_args: --features cli
           - platform_name: linux
             runner: ubuntu-22.04
             target: ""
+            tauri_args: --features cli
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -66,4 +69,4 @@ jobs:
           releaseDraft: false
           prerelease: false
           tauriScript: pnpm tauri
-          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          args: ${{ matrix.tauri_args }}
