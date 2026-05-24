@@ -1,6 +1,12 @@
 name: Release CLI
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to build and publish.
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -39,6 +45,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -67,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           STAGING="release-staging/${{ matrix.target }}"
           OUTPUT_DIR="release-assets"
           BINARY_PATH="src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
@@ -86,12 +94,14 @@ jobs:
           EOF
 
           tar -C "$STAGING" -czf "$OUTPUT_DIR/${{ matrix.archive_name }}" .
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Package CLI archive
         if: matrix.archive_format == 'zip'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:RELEASE_TAG.TrimStart('v')
           $staging = "release-staging/${{ matrix.target }}"
           $outputDir = "release-assets"
           $binaryPath = "src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
@@ -110,6 +120,8 @@ jobs:
           "@ | Set-Content -NoNewline -Path "$staging/INSTALL.txt"
 
           Compress-Archive -Path "$staging/*" -DestinationPath "$outputDir/${{ matrix.archive_name }}" -Force
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -134,9 +146,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           REPO="${GITHUB_REPOSITORY}"
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG}"
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
@@ -195,16 +207,17 @@ jobs:
           fs.writeFileSync('dsp-updates.json', JSON.stringify(manifest, null, 2) + '\n');
           NODE
         env:
-          VERSION: ${{ github.ref_name }}
-          BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
-          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          VERSION: ${{ inputs.release_tag || github.ref_name }}
+          BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag || github.ref_name }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag || github.ref_name }}
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: |
             release-assets/dsp-checksums.txt
             release-assets/dsp-updates.json

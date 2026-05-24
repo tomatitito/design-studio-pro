@@ -1,6 +1,12 @@
 name: Release Desktop Installers
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to build and publish.
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -31,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -63,8 +71,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Design Studio Pro ${{ github.ref_name }}
+          tagName: ${{ inputs.release_tag || github.ref_name }}
+          releaseName: Design Studio Pro ${{ inputs.release_tag || github.ref_name }}
           releaseBody: Automated cross-platform release artifacts (Windows, macOS, Linux).
           releaseDraft: false
           prerelease: false
