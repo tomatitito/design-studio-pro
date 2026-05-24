@@ -66,14 +66,14 @@ jobs:
           cp "$BINARY_PATH" "$STAGING/${{ matrix.binary_name }}"
 
           cat > "$STAGING/INSTALL.txt" <<EOF
-Standalone Design Studio Pro CLI $VERSION
+          Standalone Design Studio Pro CLI $VERSION
 
-Official self-update installs are supported only from:
-  macOS/Linux: ~/.design-studio-pro/bin/dsp
-  Windows: %LOCALAPPDATA%\\DesignStudioPro\\bin\\dsp.exe
+          Official self-update installs are supported only from:
+            macOS/Linux: ~/.design-studio-pro/bin/dsp
+            Windows: %LOCALAPPDATA%\\DesignStudioPro\\bin\\dsp.exe
 
-Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
-EOF
+          Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
+          EOF
 
           tar -C "$STAGING" -czf "$OUTPUT_DIR/${{ matrix.archive_name }}" .
 
@@ -90,14 +90,14 @@ EOF
           Copy-Item $binaryPath -Destination "$staging/${{ matrix.binary_name }}"
 
           @"
-Standalone Design Studio Pro CLI $version
+          Standalone Design Studio Pro CLI $version
 
-Official self-update installs are supported only from:
-  macOS/Linux: ~/.design-studio-pro/bin/dsp
-  Windows: %LOCALAPPDATA%\DesignStudioPro\bin\dsp.exe
+          Official self-update installs are supported only from:
+            macOS/Linux: ~/.design-studio-pro/bin/dsp
+            Windows: %LOCALAPPDATA%\DesignStudioPro\bin\dsp.exe
 
-Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
-"@ | Set-Content -NoNewline -Path "$staging/INSTALL.txt"
+          Run 'dsp update check' to inspect update availability or 'dsp self-update' to install immediately.
+          "@ | Set-Content -NoNewline -Path "$staging/INSTALL.txt"
 
           Compress-Archive -Path "$staging/*" -DestinationPath "$outputDir/${{ matrix.archive_name }}" -Force
 
