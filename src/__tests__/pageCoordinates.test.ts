@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mmToPx } from "../canvas/sheet";
 import { normalizeProjectElementCoordinates } from "../projectCoordinates";
+import { createCalendarProject } from "../projectTemplates";
 import type { Project } from "../types";
 
 function makeProject(position = { x: 148.5, y: 300 }): Project {
@@ -80,5 +81,57 @@ describe("page-relative image coordinates", () => {
     const normalized = normalizeProjectElementCoordinates(project);
 
     expect(normalized.pages[0].elements[0].position).toEqual({ x: 280, y: 100 });
+  });
+
+  it("preserves fresh calendar template coordinates during normalization", () => {
+    const project = createCalendarProject(2031, "2026-01-01T00:00:00Z");
+    const january = project.pages.find((page) => page.id === "calendar-month-1");
+    const firstPlaceholder = january?.elements.find(
+      (element) => element.id === "calendar-month-1-photo-1",
+    );
+    const dateGrid = january?.elements.find((element) => element.id === "calendar-month-1-date-grid");
+
+    const normalized = normalizeProjectElementCoordinates(project);
+    const normalizedJanuary = normalized.pages.find((page) => page.id === "calendar-month-1");
+
+    expect(normalized).toEqual(project);
+    expect(normalizedJanuary?.elements.find((element) => element.id === firstPlaceholder?.id)?.position).toEqual(
+      firstPlaceholder?.position,
+    );
+    expect(normalizedJanuary?.elements.find((element) => element.id === dateGrid?.id)?.position).toEqual(
+      dateGrid?.position,
+    );
+  });
+
+  it("preserves calendar-role pages even when positions look like legacy absolute coordinates", () => {
+    const project = createCalendarProject(2031, "2026-01-01T00:00:00Z");
+    const january = project.pages.find((page) => page.id === "calendar-month-1");
+    expect(january).toBeDefined();
+
+    const shiftedProject: Project = {
+      ...project,
+      pages: project.pages.map((page) =>
+        page.id === "calendar-month-1"
+          ? {
+              ...page,
+              elements: page.elements.map((element) => ({
+                ...element,
+                position: { x: element.position.x + 80, y: element.position.y + 80 },
+              })),
+            }
+          : page,
+      ),
+    };
+    const shiftedPlaceholder = shiftedProject.pages
+      .find((page) => page.id === "calendar-month-1")
+      ?.elements.find((element) => element.id === "calendar-month-1-photo-1");
+
+    const normalized = normalizeProjectElementCoordinates(shiftedProject);
+
+    expect(
+      normalized.pages
+        .find((page) => page.id === "calendar-month-1")
+        ?.elements.find((element) => element.id === "calendar-month-1-photo-1")?.position,
+    ).toEqual(shiftedPlaceholder?.position);
   });
 });

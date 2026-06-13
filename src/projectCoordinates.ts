@@ -4,6 +4,16 @@ const DISPLAY_DPI = 72;
 const INCH_TO_PX = DISPLAY_DPI;
 const EPSILON = 0.001;
 const MIN_LEGACY_SHEET_OFFSET_PX = 24;
+const CALENDAR_PAGE_ROLES = new Set(["title", "month"]);
+const CALENDAR_ELEMENT_ROLES = new Set([
+  "photo-placeholder",
+  "title-text",
+  "subtitle-text",
+  "month-label",
+  "date-grid",
+  "theme",
+  "decorative",
+]);
 
 function dimensionToPx(value: number, unit: Project["settings"]["unit"]): number {
   switch (unit) {
@@ -38,7 +48,22 @@ function translatePage(page: Page, offsetX: number, offsetY: number): Page {
   };
 }
 
+function hasCalendarElementRole(element: Element): boolean {
+  if (element.role && CALENDAR_ELEMENT_ROLES.has(element.role)) return true;
+  if (element.elementType !== "group") return false;
+  return element.children.some(hasCalendarElementRole);
+}
+
+function shouldPreserveCalendarCoordinates(page: Page, project: Project): boolean {
+  if (project.projectType !== "calendar") return false;
+  return Boolean(
+    (page.role && CALENDAR_PAGE_ROLES.has(page.role)) || page.elements.some(hasCalendarElementRole),
+  );
+}
+
 function normalizePageElements(page: Page, project: Project): Page {
+  if (shouldPreserveCalendarCoordinates(page, project)) return page;
+
   const widthPx = dimensionToPx(page.width || project.settings.width, project.settings.unit);
   const heightPx = dimensionToPx(page.height || project.settings.height, project.settings.unit);
 

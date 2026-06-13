@@ -1,13 +1,43 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mmToPx } from "../canvas/sheet";
 import { Canvas } from "../components/Canvas";
 import { CanvasProvider } from "../components/CanvasContext";
 import { useProjectStore, useUIStore } from "../stores";
+import { replacePagePhotoPlaceholder } from "../calendarContracts";
+import { createCalendarProject } from "../projectTemplates";
+import { CALENDAR_HANDWRITING_FONT_STACK } from "../textStyles";
 import type { Project } from "../types";
 
 const fabricMock = vi.hoisted(() => {
   const canvasInstances: MockCanvas[] = [];
   const rectInstances: MockRect[] = [];
+
+  function originOffset(origin: unknown, size: number): number {
+    if (origin === "left" || origin === "top") return 0;
+    if (origin === "right" || origin === "bottom") return size;
+    return size / 2;
+  }
+
+  function getOriginAwareBoundingRect(obj: {
+    left?: number;
+    top?: number;
+    width?: number;
+    height?: number;
+    scaleX?: number;
+    scaleY?: number;
+    originX?: unknown;
+    originY?: unknown;
+  }) {
+    const width = (obj.width ?? 0) * (obj.scaleX ?? 1);
+    const height = (obj.height ?? 0) * (obj.scaleY ?? 1);
+    return {
+      left: (obj.left ?? 0) - originOffset(obj.originX, width),
+      top: (obj.top ?? 0) - originOffset(obj.originY, height),
+      width,
+      height,
+    };
+  }
 
   class MockCanvas {
     listeners = new Map<string, Array<(event: unknown) => void>>();
@@ -63,6 +93,7 @@ const fabricMock = vi.hoisted(() => {
     getActiveObject = vi.fn();
     getActiveObjects = vi.fn(() => []);
     setActiveObject = vi.fn();
+    getPointer = vi.fn();
 
     constructor() {
       canvasInstances.push(this);
@@ -79,6 +110,10 @@ const fabricMock = vi.hoisted(() => {
     top?: number;
     width?: number;
     height?: number;
+    scaleX = 1;
+    scaleY = 1;
+    originX = "center";
+    originY = "center";
     fill?: unknown;
     selectable?: boolean;
     evented?: boolean;
@@ -86,16 +121,37 @@ const fabricMock = vi.hoisted(() => {
       Object.assign(this, update);
     });
     setCoords = vi.fn();
-    getBoundingRect = vi.fn(() => ({
-      left: this.left ?? 0,
-      top: this.top ?? 0,
-      width: this.width ?? 0,
-      height: this.height ?? 0,
-    }));
+    getBoundingRect = vi.fn(() => getOriginAwareBoundingRect(this));
 
     constructor(opts: Record<string, unknown> = {}) {
       Object.assign(this, opts);
       rectInstances.push(this);
+    }
+  }
+
+  class MockTextbox {
+    type = "textbox";
+    text: string;
+    width?: number;
+    height?: number;
+    left = 0;
+    top = 0;
+    scaleX = 1;
+    scaleY = 1;
+    originX = "center";
+    originY = "center";
+    elementId = "";
+    set = vi.fn((update: Record<string, unknown>) => {
+      Object.assign(this, update);
+    });
+    setCoords = vi.fn();
+    enterEditing = vi.fn();
+    selectAll = vi.fn();
+    getBoundingRect = vi.fn(() => getOriginAwareBoundingRect(this));
+
+    constructor(text: string, opts: Record<string, unknown> = {}) {
+      this.text = text;
+      Object.assign(this, opts);
     }
   }
 
@@ -109,22 +165,19 @@ const fabricMock = vi.hoisted(() => {
       top: 0,
       scaleX: 1,
       scaleY: 1,
+      originX: "center",
+      originY: "center",
       elementId: "",
       set: vi.fn((update: Record<string, unknown>) => {
         Object.assign(image, update);
       }),
       setCoords: vi.fn(),
-      getBoundingRect: vi.fn(() => ({
-        left: image.left,
-        top: image.top,
-        width: image.width * image.scaleX,
-        height: image.height * image.scaleY,
-      })),
+      getBoundingRect: vi.fn(() => getOriginAwareBoundingRect(image)),
     };
     return image;
   });
 
-  return { canvasInstances, rectInstances, MockCanvas, MockRect, fabricImageFromURL };
+  return { canvasInstances, rectInstances, MockCanvas, MockRect, MockTextbox, fabricImageFromURL };
 });
 
 vi.mock("fabric", () => ({
@@ -141,6 +194,7 @@ vi.mock("fabric", () => ({
     }
   },
   FabricImage: { fromURL: fabricMock.fabricImageFromURL },
+  Textbox: fabricMock.MockTextbox,
   ActiveSelection: vi.fn(),
   Point: class {
     x: number;
@@ -395,6 +449,300 @@ describe("Canvas", () => {
     expect(selectedImage.bringToFront).toHaveBeenCalledTimes(1);
     expect(lowerImage.bringToFront).not.toHaveBeenCalled();
     expect(canvas.requestRenderAll).toHaveBeenCalled();
+  });
+
+  it("renders January calendar objects at the sheet origin plus their mm offsets", async () => {
+    const project = createCalendarProject(2031, "2026-01-01T00:00:00Z");
+    const january = project.pages.find((page) => page.id === "calendar-month-1");
+    if (!january) throw new Error("January page not found");
+    const januaryWithImage = replacePagePhotoPlaceholder(january, "calendar-month-1-photo-1", {
+      src: "/photos/january.jpg",
+      alt: "January photo",
+    });
+    project.pages = project.pages.map((page) =>
+      page.id === januaryWithImage.id ? januaryWithImage : page,
+    );
+    useProjectStore.setState({ currentProject: project, activePageId: "calendar-month-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(
+        canvas.objects.some(
+          (obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-photo-1",
+        ),
+      ).toBe(true);
+      expect(
+        canvas.objects.some(
+          (obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-photo-2",
+        ),
+      ).toBe(true);
+      expect(
+        canvas.objects.some(
+          (obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-date-grid",
+        ),
+      ).toBe(true);
+    });
+
+    type RenderedObject = {
+      left: number;
+      top: number;
+      originX?: string;
+      originY?: string;
+      getBoundingRect: () => { left: number; top: number; width: number; height: number };
+    };
+    const getRenderedObject = (id: string) =>
+      canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === id) as RenderedObject;
+    const expectTopLeftOriginAt = (obj: RenderedObject, x: number, y: number) => {
+      expect(obj.originX).toBe("left");
+      expect(obj.originY).toBe("top");
+      expect(obj.left).toBeCloseTo(x);
+      expect(obj.top).toBeCloseTo(y);
+      const bounds = obj.getBoundingRect();
+      expect(bounds.left).toBeCloseTo(x);
+      expect(bounds.top).toBeCloseTo(y);
+    };
+
+    const image = getRenderedObject("calendar-month-1-photo-1");
+    const placeholder = getRenderedObject("calendar-month-1-photo-2");
+    const dateGrid = getRenderedObject("calendar-month-1-date-grid");
+
+    expectTopLeftOriginAt(image, (sheet.left ?? 0) + mmToPx(18), (sheet.top ?? 0) + mmToPx(20));
+    expectTopLeftOriginAt(placeholder, (sheet.left ?? 0) + mmToPx(109), (sheet.top ?? 0) + mmToPx(20));
+    expectTopLeftOriginAt(dateGrid, (sheet.left ?? 0) + mmToPx(18), (sheet.top ?? 0) + mmToPx(181));
+
+    const positionsBefore = project.pages
+      .find((page) => page.id === "calendar-month-1")
+      ?.elements.map((element) => ({ id: element.id, position: element.position }));
+
+    act(() => {
+      useUIStore.getState().toggleSidebar();
+      useUIStore.getState().setActivePanel("properties");
+    });
+
+    expect(
+      useProjectStore
+        .getState()
+        .currentProject?.pages.find((page) => page.id === "calendar-month-1")
+        ?.elements.map((element) => ({ id: element.id, position: element.position })),
+    ).toEqual(positionsBefore);
+  });
+
+  it("renders text elements and persists text edits from Fabric", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          elements: [
+            {
+              id: "title-text",
+              elementType: "text",
+              content: "Kalender 2027",
+              fontFamily: CALENDAR_HANDWRITING_FONT_STACK,
+              fontSize: 24,
+              color: "#111111",
+              fontWeight: "700",
+              textAlign: "center",
+              letterSpacing: 1.2,
+              position: { x: 10, y: 20 },
+              size: { width: 160, height: 40 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "page-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "title-text")).toBe(true);
+    });
+
+    const textObject = canvas.objects.find(
+      (obj) => (obj as { elementId?: string }).elementId === "title-text",
+    ) as { text: string; fontFamily: string; fontWeight: string; textAlign: string; charSpacing: number };
+    expect(textObject.text).toBe("Kalender 2027");
+    expect(textObject.fontFamily).toBe(CALENDAR_HANDWRITING_FONT_STACK);
+    expect(textObject.fontWeight).toBe("700");
+    expect(textObject.textAlign).toBe("center");
+    expect(textObject.charSpacing).toBe(1200);
+
+    act(() => {
+      textObject.text = "Kalender 2028";
+      canvas.emit("text:changed", { target: textObject });
+    });
+
+    const updatedText = useProjectStore
+      .getState()
+      .currentProject?.pages[0].elements.find((element) => element.id === "title-text");
+    expect(updatedText?.elementType).toBe("text");
+    if (updatedText?.elementType === "text") {
+      expect(updatedText.content).toBe("Kalender 2028");
+    }
+  });
+
+  it("adds a selectable editable text box with defaults when using the text tool", async () => {
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+    expect(canvas).toBeDefined();
+    expect(sheet).toBeDefined();
+
+    act(() => {
+      useUIStore.getState().setSelectedTool("text");
+      canvas.emit("mouse:down", { scenePoint: { x: (sheet.left ?? 0) + 20, y: (sheet.top ?? 0) + 30 } });
+      canvas.emit("mouse:up", { scenePoint: { x: (sheet.left ?? 0) + 20, y: (sheet.top ?? 0) + 30 } });
+    });
+
+    const addedText = useProjectStore.getState().currentProject?.pages[0].elements.find(
+      (element) => element.elementType === "text" && element.content === "Text",
+    );
+    expect(addedText).toBeDefined();
+    expect(addedText).toMatchObject({
+      elementType: "text",
+      position: { x: 20, y: 30 },
+      size: { width: 70, height: 18 },
+      fontSize: 12,
+      color: "#111111",
+      locked: false,
+      visible: true,
+    });
+    expect(useProjectStore.getState().isDirty).toBe(true);
+    expect(useUIStore.getState().selectedTool).toBe("select");
+    expect(useUIStore.getState().selectedElementIds).toEqual([addedText?.id]);
+    expect(useUIStore.getState().activePanel).toBe("properties");
+
+    await waitFor(() => {
+      const textObjects = canvas.objects.filter(
+        (obj) => (obj as { elementId?: string }).elementId === addedText?.id,
+      ) as Array<{ enterEditing?: ReturnType<typeof vi.fn>; selectAll?: ReturnType<typeof vi.fn> }>;
+      expect(textObjects.length).toBeGreaterThan(0);
+      expect(canvas.setActiveObject).toHaveBeenCalled();
+      const activatedText = canvas.setActiveObject.mock.calls.find(
+        ([obj]) => (obj as { elementId?: string }).elementId === addedText?.id,
+      )?.[0] as
+        | {
+            enterEditing?: ReturnType<typeof vi.fn>;
+            selectAll?: ReturnType<typeof vi.fn>;
+            originX?: string;
+            originY?: string;
+            left?: number;
+            top?: number;
+            getBoundingRect?: () => { left: number; top: number };
+          }
+        | undefined;
+      expect(activatedText?.originX).toBe("left");
+      expect(activatedText?.originY).toBe("top");
+      expect(activatedText?.left).toBeCloseTo((sheet.left ?? 0) + 20);
+      expect(activatedText?.top).toBeCloseTo((sheet.top ?? 0) + 30);
+      expect(activatedText?.getBoundingRect?.().left).toBeCloseTo((sheet.left ?? 0) + 20);
+      expect(activatedText?.getBoundingRect?.().top).toBeCloseTo((sheet.top ?? 0) + 30);
+      expect(activatedText?.enterEditing).toHaveBeenCalled();
+      expect(activatedText?.selectAll).toHaveBeenCalled();
+    });
+  });
+
+  it("sizes a new text box from a text-tool drag", () => {
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    act(() => {
+      useUIStore.getState().setSelectedTool("text");
+      canvas.emit("mouse:down", { scenePoint: { x: (sheet.left ?? 0) + 10, y: (sheet.top ?? 0) + 15 } });
+      canvas.emit("mouse:up", { scenePoint: { x: (sheet.left ?? 0) + 90, y: (sheet.top ?? 0) + 55 } });
+    });
+
+    const addedText = useProjectStore.getState().currentProject?.pages[0].elements.find(
+      (element) => element.elementType === "text" && element.content === "Text",
+    );
+    expect(addedText).toMatchObject({
+      position: { x: 10, y: 15 },
+      size: { width: 80, height: 40 },
+    });
+  });
+
+  it("places a clicked text box near the rendered right and bottom page edges", () => {
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+    const x = mmToPx(210) - 40;
+    const y = mmToPx(297) - 30;
+
+    act(() => {
+      useUIStore.getState().setSelectedTool("text");
+      canvas.emit("mouse:down", { scenePoint: { x: (sheet.left ?? 0) + x, y: (sheet.top ?? 0) + y } });
+      canvas.emit("mouse:up", { scenePoint: { x: (sheet.left ?? 0) + x, y: (sheet.top ?? 0) + y } });
+    });
+
+    const addedText = useProjectStore.getState().currentProject?.pages[0].elements.find(
+      (element) => element.elementType === "text" && element.content === "Text",
+    );
+    expect(addedText?.position.x).toBeCloseTo(x);
+    expect(addedText?.position.y).toBeCloseTo(y);
+    expect(addedText?.size.width).toBeCloseTo(40);
+    expect(addedText?.size.height).toBeCloseTo(18);
+  });
+
+  it("sizes a dragged text box near the rendered right and bottom page edges", () => {
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+    const start = { x: mmToPx(210) - 100, y: mmToPx(297) - 80 };
+    const end = { x: mmToPx(210) - 10, y: mmToPx(297) - 15 };
+
+    act(() => {
+      useUIStore.getState().setSelectedTool("text");
+      canvas.emit("mouse:down", { scenePoint: { x: (sheet.left ?? 0) + start.x, y: (sheet.top ?? 0) + start.y } });
+      canvas.emit("mouse:up", { scenePoint: { x: (sheet.left ?? 0) + end.x, y: (sheet.top ?? 0) + end.y } });
+    });
+
+    const addedText = useProjectStore.getState().currentProject?.pages[0].elements.find(
+      (element) => element.elementType === "text" && element.content === "Text",
+    );
+    expect(addedText?.position.x).toBeCloseTo(start.x);
+    expect(addedText?.position.y).toBeCloseTo(start.y);
+    expect(addedText?.size.width).toBeCloseTo(end.x - start.x);
+    expect(addedText?.size.height).toBeCloseTo(end.y - start.y);
   });
 
   it("renders only the active page content and background when switching pages", async () => {

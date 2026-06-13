@@ -4,8 +4,10 @@
 //! It handles page setup, image positioning, and coordinate transformations.
 
 use ::image::{ImageBuffer, Rgb as ImgRgb, RgbImage};
+use printpdf::path::{PaintMode, WindingOrder};
 use printpdf::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
 
@@ -37,12 +39,77 @@ pub struct PdfImageElement {
     pub border_width: Option<f64>,
 }
 
+/// A text element to be placed in the PDF.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfTextElement {
+    pub content: String,
+    pub x_mm: f64,
+    pub y_mm: f64,
+    pub width_mm: f64,
+    pub height_mm: f64,
+    pub rotation_deg: f64,
+    pub font_family: String,
+    pub font_size: f64,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<f64>,
+}
+
+/// A shape/decorative element to be placed in the PDF.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfShapeElement {
+    pub shape_kind: String,
+    pub x_mm: f64,
+    pub y_mm: f64,
+    pub width_mm: f64,
+    pub height_mm: f64,
+    pub rotation_deg: f64,
+    pub fill: String,
+    pub stroke: String,
+    pub stroke_width: f64,
+    #[serde(default = "default_opacity")]
+    pub opacity: f64,
+}
+
+fn default_opacity() -> f64 {
+    1.0
+}
+
+/// A z-ordered renderable element. Existing `images`/`texts` fields remain for
+/// compatibility; new callers populate this list so decorative shapes can be
+/// layered relative to photos and text. Opacity is accepted but currently
+/// flattened to opaque PDF drawing because the backend does not emit PDF
+/// transparency groups yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "elementType",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PdfRenderableElement {
+    Image(PdfImageElement),
+    Text(PdfTextElement),
+    Shape(PdfShapeElement),
+}
+
 /// A single page in a PDF export request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PdfPageExport {
     pub page: PdfPageConfig,
     pub images: Vec<PdfImageElement>,
+    #[serde(default)]
+    pub texts: Vec<PdfTextElement>,
+    #[serde(default)]
+    pub shapes: Vec<PdfShapeElement>,
+    #[serde(default)]
+    pub elements: Vec<PdfRenderableElement>,
 }
 
 /// Request structure for PDF export.
@@ -56,6 +123,12 @@ pub struct PdfExportRequest {
     pub page: Option<PdfPageConfig>,
     #[serde(default)]
     pub images: Vec<PdfImageElement>,
+    #[serde(default)]
+    pub texts: Vec<PdfTextElement>,
+    #[serde(default)]
+    pub shapes: Vec<PdfShapeElement>,
+    #[serde(default)]
+    pub elements: Vec<PdfRenderableElement>,
     #[serde(default)]
     pub pages: Vec<PdfPageExport>,
     pub output_path: String,
@@ -75,6 +148,9 @@ impl PdfExportRequest {
         Ok(vec![PdfPageExport {
             page,
             images: self.images.clone(),
+            texts: self.texts.clone(),
+            shapes: self.shapes.clone(),
+            elements: self.elements.clone(),
         }])
     }
 }
@@ -393,6 +469,114 @@ fn draw_image_border(
 ///
 /// The input coordinates use a top-left origin (typical for design tools),
 /// but PDF uses a bottom-left origin. This function handles the conversion.
+fn color_from_hex(input: &str, fallback: [u8; 3]) -> [u8; 3] {
+    parse_hex_color(input).unwrap_or(fallback)
+}
+
+fn pdf_rgb(color: [u8; 3]) -> Color {
+    Color::Rgb(Rgb::new(
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+        None,
+    ))
+}
+
+fn page_y(page: &PdfPageConfig, y_mm: f64, height_mm: f64) -> f32 {
+    (page.height_mm - y_mm - height_mm) as f32
+}
+
+fn add_shape_to_layer(
+    layer: &PdfLayerReference,
+    page: &PdfPageConfig,
+    shape: &PdfShapeElement,
+) -> Result<(), String> {
+    if !shape.width_mm.is_finite()
+        || !shape.height_mm.is_finite()
+        || shape.width_mm <= 0.0
+        || shape.height_mm <= 0.0
+    {
+        return Ok(());
+    }
+
+    if shape.rotation_deg.is_finite() && shape.rotation_deg.abs() > f64::EPSILON {
+        // Scoped limitation: decorative shape rotation is not yet implemented in
+        // the backend PDF vector fallback. Export the unrotated primitive instead
+        // of dropping it so backgrounds/accents remain visible and layered.
+        log::warn!(
+            "PDF decorative shape rotation is unsupported; exporting '{}' unrotated ({}°)",
+            shape.shape_kind,
+            shape.rotation_deg
+        );
+    }
+
+    layer.set_fill_color(pdf_rgb(color_from_hex(&shape.fill, [255, 255, 255])));
+    layer.set_outline_color(pdf_rgb(color_from_hex(&shape.stroke, [0, 0, 0])));
+    layer.set_outline_thickness((shape.stroke_width.max(0.0) * MM_TO_PT) as f32);
+
+    let x = shape.x_mm as f32;
+    let y = page_y(page, shape.y_mm, shape.height_mm);
+    let width = shape.width_mm as f32;
+    let height = shape.height_mm as f32;
+
+    match shape.shape_kind.as_str() {
+        "rectangle" => {
+            layer.add_polygon(Polygon {
+                rings: vec![vec![
+                    (Point::new(Mm(x), Mm(y)), false),
+                    (Point::new(Mm(x + width), Mm(y)), false),
+                    (Point::new(Mm(x + width), Mm(y + height)), false),
+                    (Point::new(Mm(x), Mm(y + height)), false),
+                ]],
+                mode: PaintMode::FillStroke,
+                winding_order: WindingOrder::NonZero,
+            });
+        }
+        "ellipse" => {
+            let cx = x + width / 2.0;
+            let cy = y + height / 2.0;
+            let rx = width / 2.0;
+            let ry = height / 2.0;
+            let k = 0.552_284_8_f32;
+            layer.add_polygon(Polygon {
+                rings: vec![vec![
+                    (Point::new(Mm(cx + rx), Mm(cy)), true),
+                    (Point::new(Mm(cx + rx), Mm(cy + k * ry)), true),
+                    (Point::new(Mm(cx + k * rx), Mm(cy + ry)), false),
+                    (Point::new(Mm(cx), Mm(cy + ry)), true),
+                    (Point::new(Mm(cx - k * rx), Mm(cy + ry)), true),
+                    (Point::new(Mm(cx - rx), Mm(cy + k * ry)), false),
+                    (Point::new(Mm(cx - rx), Mm(cy)), true),
+                    (Point::new(Mm(cx - rx), Mm(cy - k * ry)), true),
+                    (Point::new(Mm(cx - k * rx), Mm(cy - ry)), false),
+                    (Point::new(Mm(cx), Mm(cy - ry)), true),
+                    (Point::new(Mm(cx + k * rx), Mm(cy - ry)), true),
+                    (Point::new(Mm(cx + rx), Mm(cy - k * ry)), false),
+                ]],
+                mode: PaintMode::FillStroke,
+                winding_order: WindingOrder::NonZero,
+            });
+        }
+        "line" => {
+            layer.add_line(Line {
+                points: vec![
+                    (Point::new(Mm(x), Mm(y + height)), false),
+                    (Point::new(Mm(x + width), Mm(y)), false),
+                ],
+                is_closed: false,
+            });
+        }
+        other => {
+            return Err(format!(
+                "Unsupported PDF decorative shape kind: {} (fill/stroke fallback unavailable)",
+                other
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn add_images_to_layer(
     current_layer: &PdfLayerReference,
     page: &PdfPageConfig,
@@ -490,6 +674,358 @@ fn add_images_to_layer(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PdfFontFace {
+    Helvetica,
+    HelveticaBold,
+    Times,
+    TimesBold,
+    Courier,
+    CourierBold,
+    Caveat,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LaidOutTextLine {
+    content: String,
+    x_mm: f64,
+    baseline_y_mm: f64,
+}
+
+const MM_TO_PT: f64 = 72.0 / 25.4;
+const PT_TO_MM: f64 = 25.4 / 72.0;
+const CAVEAT_FONT_BYTES: &[u8] =
+    include_bytes!("../../../src/assets/fonts/Caveat-VariableFont_wght.ttf");
+
+fn is_bold_weight(weight: Option<&str>) -> bool {
+    weight
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "bold"
+                || normalized == "bolder"
+                || normalized
+                    .parse::<u16>()
+                    .map(|numeric| numeric >= 600)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_pdf_font_face(font_family: &str, font_weight: Option<&str>) -> PdfFontFace {
+    let family = font_family.to_ascii_lowercase();
+    let bold = is_bold_weight(font_weight);
+
+    if family.contains("caveat") {
+        return PdfFontFace::Caveat;
+    }
+    if family.contains("courier") || family.contains("mono") {
+        return if bold {
+            PdfFontFace::CourierBold
+        } else {
+            PdfFontFace::Courier
+        };
+    }
+    if family.contains("times")
+        || family.contains("georgia")
+        || family.contains("serif") && !family.contains("sans-serif")
+    {
+        return if bold {
+            PdfFontFace::TimesBold
+        } else {
+            PdfFontFace::Times
+        };
+    }
+
+    if bold {
+        PdfFontFace::HelveticaBold
+    } else {
+        PdfFontFace::Helvetica
+    }
+}
+
+fn approximate_char_width_factor(ch: char, face: PdfFontFace) -> f64 {
+    if ch.is_whitespace() {
+        return 0.32;
+    }
+    if matches!(face, PdfFontFace::Courier | PdfFontFace::CourierBold) {
+        return 0.60;
+    }
+    if matches!(face, PdfFontFace::Caveat) {
+        return if ch.is_ascii_uppercase() { 0.55 } else { 0.42 };
+    }
+    if "ilI.,:;|'!".contains(ch) {
+        0.25
+    } else if "mwMW@&%".contains(ch) {
+        0.82
+    } else if ch.is_ascii_uppercase() || ch.is_numeric() {
+        0.58
+    } else {
+        0.50
+    }
+}
+
+fn approximate_text_width_mm(content: &str, text: &PdfTextElement, face: PdfFontFace) -> f64 {
+    let font_size_mm = text.visible_font_size() * PT_TO_MM;
+    let letter_spacing_mm = text.visible_letter_spacing_em() * font_size_mm;
+    let glyph_width: f64 = content
+        .chars()
+        .map(|ch| approximate_char_width_factor(ch, face) * font_size_mm)
+        .sum();
+    let gaps = content.chars().count().saturating_sub(1) as f64;
+    glyph_width + gaps * letter_spacing_mm
+}
+
+fn whitespace_preserving_segments(paragraph: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut current_is_whitespace = None;
+
+    for (index, ch) in paragraph.char_indices() {
+        let is_whitespace = ch.is_whitespace();
+        match current_is_whitespace {
+            None => current_is_whitespace = Some(is_whitespace),
+            Some(previous) if previous != is_whitespace => {
+                segments.push(&paragraph[start..index]);
+                start = index;
+                current_is_whitespace = Some(is_whitespace);
+            }
+            _ => {}
+        }
+    }
+
+    if start < paragraph.len() {
+        segments.push(&paragraph[start..]);
+    }
+
+    segments
+}
+
+fn wrap_paragraph(paragraph: &str, text: &PdfTextElement, face: PdfFontFace) -> Vec<String> {
+    if paragraph.is_empty() {
+        return vec![String::new()];
+    }
+
+    let max_width = text.width_mm.max(0.0);
+    if max_width <= 0.0 || approximate_text_width_mm(paragraph, text, face) <= max_width {
+        return vec![paragraph.to_string()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for segment in whitespace_preserving_segments(paragraph) {
+        let candidate = format!("{}{}", current, segment);
+
+        if approximate_text_width_mm(&candidate, text, face) <= max_width || current.is_empty() {
+            current = candidate;
+            continue;
+        }
+
+        lines.push(current);
+        current = segment.to_string();
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    lines
+}
+
+fn layout_text_lines(text: &PdfTextElement, face: PdfFontFace) -> Vec<LaidOutTextLine> {
+    let font_size = text.visible_font_size();
+    let line_height_mm = text.line_height_mm();
+    let box_height = text.height_mm.max(line_height_mm);
+    let max_lines = ((box_height / line_height_mm).floor() as usize).max(1);
+    let baseline_offset_mm = font_size * 0.82 * PT_TO_MM;
+
+    let mut lines = Vec::new();
+    for paragraph in text.content.split('\n') {
+        lines.extend(wrap_paragraph(paragraph, text, face));
+    }
+
+    lines
+        .into_iter()
+        .take(max_lines)
+        .enumerate()
+        .map(|(index, content)| {
+            let line_width = approximate_text_width_mm(&content, text, face);
+            let remaining = (text.width_mm - line_width).max(0.0);
+            let align_offset = match text.text_align.as_deref().unwrap_or("left") {
+                "center" => remaining / 2.0,
+                "right" => remaining,
+                // PDF export intentionally falls back to left alignment for Fabric's
+                // `justify`: robust word/character expansion needs browser-grade text
+                // shaping and is out of scope for this backend exporter slice.
+                "justify" => 0.0,
+                _ => 0.0,
+            };
+
+            LaidOutTextLine {
+                content,
+                x_mm: text.x_mm + align_offset,
+                baseline_y_mm: text.y_mm + baseline_offset_mm + index as f64 * line_height_mm,
+            }
+        })
+        .collect()
+}
+
+fn builtin_font_for_face(face: PdfFontFace) -> BuiltinFont {
+    match face {
+        PdfFontFace::Helvetica | PdfFontFace::Caveat => BuiltinFont::Helvetica,
+        PdfFontFace::HelveticaBold => BuiltinFont::HelveticaBold,
+        PdfFontFace::Times => BuiltinFont::TimesRoman,
+        PdfFontFace::TimesBold => BuiltinFont::TimesBold,
+        PdfFontFace::Courier => BuiltinFont::Courier,
+        PdfFontFace::CourierBold => BuiltinFont::CourierBold,
+    }
+}
+
+fn load_font(
+    doc: &PdfDocumentReference,
+    cache: &mut HashMap<PdfFontFace, IndirectFontRef>,
+    face: PdfFontFace,
+) -> Result<IndirectFontRef, String> {
+    if let Some(font) = cache.get(&face) {
+        return Ok(font.clone());
+    }
+
+    let loaded = if face == PdfFontFace::Caveat {
+        doc.add_external_font(Cursor::new(CAVEAT_FONT_BYTES))
+    } else {
+        doc.add_builtin_font(builtin_font_for_face(face))
+    }
+    .map_err(|e| format!("Failed to add PDF text font: {}", e))?;
+
+    cache.insert(face, loaded.clone());
+    Ok(loaded)
+}
+
+fn add_texts_to_layer(
+    current_layer: &PdfLayerReference,
+    doc: &PdfDocumentReference,
+    page: &PdfPageConfig,
+    texts: &[PdfTextElement],
+) -> Result<(), String> {
+    if texts.is_empty() {
+        return Ok(());
+    }
+
+    let mut font_cache = HashMap::new();
+
+    for text in texts {
+        if text.content.is_empty() || !text.visible_font_size().is_finite() {
+            continue;
+        }
+
+        let face = resolve_pdf_font_face(&text.font_family, text.font_weight.as_deref());
+        let font = load_font(doc, &mut font_cache, face)?;
+        let color = parse_hex_color(&text.color).unwrap_or([0, 0, 0]);
+        current_layer.set_fill_color(Color::Rgb(Rgb::new(
+            color[0] as f32 / 255.0,
+            color[1] as f32 / 255.0,
+            color[2] as f32 / 255.0,
+            None,
+        )));
+
+        for line in layout_text_lines(text, face) {
+            if line.content.is_empty() {
+                continue;
+            }
+
+            let y_pdf = page.height_mm - line.baseline_y_mm;
+            current_layer.begin_text_section();
+            current_layer.set_font(&font, text.visible_font_size() as f32);
+            current_layer.set_line_height((text.line_height_mm() * MM_TO_PT) as f32);
+            current_layer.set_character_spacing(
+                (text.visible_letter_spacing_em() * text.visible_font_size()) as f32,
+            );
+            // Multiline rotated text is approximated line-by-line around each line baseline.
+            // This keeps scope bounded while preserving the existing single-line rotation path.
+            current_layer.set_text_matrix(TextMatrix::TranslateRotate(
+                Pt((line.x_mm * MM_TO_PT) as f32),
+                Pt((y_pdf * MM_TO_PT) as f32),
+                text.rotation_deg as f32,
+            ));
+            current_layer.write_text(line.content, &font);
+            current_layer.end_text_section();
+        }
+    }
+
+    Ok(())
+}
+
+fn add_renderable_elements_to_layer(
+    current_layer: &PdfLayerReference,
+    doc: &PdfDocumentReference,
+    page: &PdfPageConfig,
+    elements: &[PdfRenderableElement],
+) -> Result<(), String> {
+    for element in elements {
+        match element {
+            PdfRenderableElement::Image(image) => {
+                add_images_to_layer(current_layer, page, std::slice::from_ref(image))?
+            }
+            PdfRenderableElement::Text(text) => {
+                add_texts_to_layer(current_layer, doc, page, std::slice::from_ref(text))?
+            }
+            PdfRenderableElement::Shape(shape) => add_shape_to_layer(current_layer, page, shape)?,
+        }
+    }
+
+    Ok(())
+}
+
+fn add_page_content_to_layer(
+    current_layer: &PdfLayerReference,
+    doc: &PdfDocumentReference,
+    page_export: &PdfPageExport,
+) -> Result<(), String> {
+    if page_export.elements.is_empty() {
+        for shape in &page_export.shapes {
+            add_shape_to_layer(current_layer, &page_export.page, shape)?;
+        }
+        add_images_to_layer(current_layer, &page_export.page, &page_export.images)?;
+        add_texts_to_layer(current_layer, doc, &page_export.page, &page_export.texts)?;
+    } else {
+        add_renderable_elements_to_layer(
+            current_layer,
+            doc,
+            &page_export.page,
+            &page_export.elements,
+        )?;
+    }
+
+    Ok(())
+}
+
+impl PdfTextElement {
+    fn visible_font_size(&self) -> f64 {
+        if self.font_size > 0.0 {
+            self.font_size
+        } else {
+            12.0
+        }
+    }
+
+    fn visible_letter_spacing_em(&self) -> f64 {
+        // Frontend Fabric uses `charSpacing = letterSpacing * 1000`, so the stored
+        // value is an em fraction. PDF character spacing is expressed in text-space
+        // units, effectively points at the active font size, so callers multiply by
+        // font size when emitting and by font-size-mm when measuring.
+        let value = self.letter_spacing.unwrap_or(0.0);
+        if value.is_finite() {
+            value
+        } else {
+            0.0
+        }
+    }
+
+    fn line_height_mm(&self) -> f64 {
+        self.visible_font_size() * 1.2 * PT_TO_MM
+    }
+}
+
 pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
     let pages = request.resolved_pages()?;
     let first = pages
@@ -505,7 +1041,7 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
 
     let current_layer = doc.get_page(page1).get_layer(layer1);
     add_background_to_layer(&current_layer, &first.page);
-    add_images_to_layer(&current_layer, &first.page, &first.images)?;
+    add_page_content_to_layer(&current_layer, &doc, first)?;
 
     for page_export in pages.iter().skip(1) {
         let (page, layer) = doc.add_page(
@@ -515,7 +1051,7 @@ pub fn export_pdf(request: &PdfExportRequest) -> Result<(), String> {
         );
         let current_layer = doc.get_page(page).get_layer(layer);
         add_background_to_layer(&current_layer, &page_export.page);
-        add_images_to_layer(&current_layer, &page_export.page, &page_export.images)?;
+        add_page_content_to_layer(&current_layer, &doc, page_export)?;
     }
 
     let file = File::create(&request.output_path)
@@ -544,6 +1080,9 @@ mod tests {
                 background: Some("#ffffff".to_string()),
             }),
             images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output_path.clone(),
         };
@@ -593,6 +1132,9 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output_path.clone(),
         };
@@ -641,6 +1183,9 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output_path.clone(),
         };
@@ -664,6 +1209,9 @@ mod tests {
                 background: Some("#ffffff".to_string()),
             }),
             images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output_path.clone(),
         };
@@ -696,6 +1244,25 @@ mod tests {
         assert!(matches!(spec, PdfBackgroundSpec::LinearGradient { .. }));
     }
 
+    fn pdf_text(overrides: impl FnOnce(&mut PdfTextElement)) -> PdfTextElement {
+        let mut text = PdfTextElement {
+            content: "März Grüße äußern fürs Öl".to_string(),
+            x_mm: 10.0,
+            y_mm: 20.0,
+            width_mm: 60.0,
+            height_mm: 30.0,
+            rotation_deg: 0.0,
+            font_family: "Inter, Noto Sans, Arial, Helvetica, sans-serif".to_string(),
+            font_size: 12.0,
+            color: "#111111".to_string(),
+            font_weight: Some("400".to_string()),
+            text_align: Some("left".to_string()),
+            letter_spacing: Some(0.0),
+        };
+        overrides(&mut text);
+        text
+    }
+
     #[test]
     fn test_resolve_border_from_style_defaults() {
         let image = PdfImageElement {
@@ -713,5 +1280,258 @@ mod tests {
         let resolved = resolve_border_for_pdf(&image).expect("expected border");
         assert_eq!(resolved.0, [92, 58, 33]);
         assert_eq!(resolved.1, 10.0);
+    }
+
+    #[test]
+    fn test_pdf_font_family_and_weight_fallbacks() {
+        assert_eq!(
+            resolve_pdf_font_face(
+                "Inter, Noto Sans, Arial, Helvetica, sans-serif",
+                Some("700")
+            ),
+            PdfFontFace::HelveticaBold
+        );
+        assert_eq!(
+            resolve_pdf_font_face("Courier New, Courier, monospace", Some("400")),
+            PdfFontFace::Courier
+        );
+        assert_eq!(
+            resolve_pdf_font_face("Georgia, Times New Roman, serif", Some("bold")),
+            PdfFontFace::TimesBold
+        );
+        assert_eq!(
+            resolve_pdf_font_face("\"Caveat\", cursive", Some("400")),
+            PdfFontFace::Caveat
+        );
+    }
+
+    #[test]
+    fn test_multiline_text_layout_wraps_and_aligns_inside_box() {
+        let text = pdf_text(|text| {
+            text.content = "Januar 2027\nMo Di Mi Do Fr Sa So\n1 2 3 4 5 6 7".to_string();
+            text.width_mm = 80.0;
+            text.height_mm = 24.0;
+            text.text_align = Some("center".to_string());
+            text.letter_spacing = Some(0.25);
+        });
+
+        let lines = layout_text_lines(&text, PdfFontFace::Helvetica);
+
+        assert!(lines.len() >= 3, "expected explicit date-grid line breaks");
+        assert_eq!(lines[0].content, "Januar 2027");
+        assert_eq!(lines[1].content, "Mo Di Mi Do Fr Sa So");
+        assert!(lines.iter().all(|line| line.x_mm >= text.x_mm));
+        assert!(
+            lines
+                .last()
+                .map(|line| line.baseline_y_mm <= text.y_mm + text.height_mm)
+                .unwrap_or(false),
+            "layout should fit within the textbox height"
+        );
+    }
+
+    #[test]
+    fn test_date_grid_layout_preserves_leading_and_repeated_spaces() {
+        let text = pdf_text(|text| {
+            text.content =
+                "Mo Di Mi Do Fr Sa So\n 1  2  3  4  5  6  7\n 8  9 10 11 12 13 14".to_string();
+            text.width_mm = 160.0;
+            text.height_mm = 45.0;
+            text.font_family = "Courier New, Courier, monospace".to_string();
+            text.font_size = 10.0;
+        });
+
+        let lines = layout_text_lines(&text, PdfFontFace::Courier);
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1].content, " 1  2  3  4  5  6  7");
+        assert_eq!(lines[2].content, " 8  9 10 11 12 13 14");
+    }
+
+    #[test]
+    fn test_wrapping_preserves_input_spaces_without_collapsing() {
+        let text = pdf_text(|text| {
+            text.content = " Alpha  Beta   Gamma".to_string();
+            text.width_mm = 32.0;
+            text.height_mm = 40.0;
+        });
+
+        let joined = layout_text_lines(&text, PdfFontFace::Helvetica)
+            .into_iter()
+            .map(|line| line.content)
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert_eq!(joined, text.content);
+    }
+
+    #[test]
+    fn test_letter_spacing_uses_fabric_em_units_for_measurement() {
+        let mut compact = pdf_text(|text| {
+            text.content = "AB".to_string();
+            text.font_size = 10.0;
+            text.letter_spacing = Some(0.0);
+        });
+        let mut spaced = compact.clone();
+        spaced.letter_spacing = Some(0.2);
+
+        let compact_width =
+            approximate_text_width_mm(&compact.content, &compact, PdfFontFace::Helvetica);
+        let spaced_width =
+            approximate_text_width_mm(&spaced.content, &spaced, PdfFontFace::Helvetica);
+        let expected_extra_mm = 0.2 * 10.0 * PT_TO_MM;
+
+        assert!(((spaced_width - compact_width) - expected_extra_mm).abs() < 1e-10);
+        compact.letter_spacing = Some(0.2);
+        assert_eq!(compact.visible_letter_spacing_em(), 0.2);
+        compact.letter_spacing = Some(-0.1);
+        assert_eq!(compact.visible_letter_spacing_em(), -0.1);
+    }
+
+    #[test]
+    fn test_export_with_decorative_shape_and_text_layering() {
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let request = PdfExportRequest {
+            page: Some(PdfPageConfig {
+                width_mm: 210.0,
+                height_mm: 297.0,
+                background: Some("#dce8d8".to_string()),
+            }),
+            images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![
+                PdfRenderableElement::Shape(PdfShapeElement {
+                    shape_kind: "rectangle".to_string(),
+                    x_mm: 0.0,
+                    y_mm: 0.0,
+                    width_mm: 210.0,
+                    height_mm: 24.0,
+                    rotation_deg: 0.0,
+                    fill: "#f4e7d3".to_string(),
+                    stroke: "#c084fc".to_string(),
+                    stroke_width: 0.7,
+                    opacity: 1.0,
+                }),
+                PdfRenderableElement::Text(pdf_text(|text| {
+                    text.content = "Kalender 2027".to_string();
+                    text.x_mm = 20.0;
+                    text.y_mm = 8.0;
+                    text.width_mm = 170.0;
+                    text.height_mm = 20.0;
+                    text.text_align = Some("center".to_string());
+                })),
+            ],
+            pages: vec![],
+            output_path: output_path.clone(),
+        };
+
+        let result = export_pdf(&request);
+        assert!(
+            result.is_ok(),
+            "Failed to export PDF with decorative shape/text: {:?}",
+            result
+        );
+
+        let pdf_bytes = std::fs::read(&output_path).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+        assert!(pdf_bytes.len() > 1000, "PDF seems too small");
+    }
+
+    #[test]
+    fn test_export_rotated_decorative_shape_uses_scoped_unrotated_fallback() {
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let request = PdfExportRequest {
+            page: Some(PdfPageConfig {
+                width_mm: 100.0,
+                height_mm: 100.0,
+                background: Some("#ffffff".to_string()),
+            }),
+            images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![PdfRenderableElement::Shape(PdfShapeElement {
+                shape_kind: "rectangle".to_string(),
+                x_mm: 10.0,
+                y_mm: 10.0,
+                width_mm: 20.0,
+                height_mm: 12.0,
+                rotation_deg: 15.0,
+                fill: "#f4e7d3".to_string(),
+                stroke: "#1f2937".to_string(),
+                stroke_width: 0.5,
+                opacity: 1.0,
+            })],
+            pages: vec![],
+            output_path: output_path.clone(),
+        };
+
+        let result = export_pdf(&request);
+        assert!(
+            result.is_ok(),
+            "rotated shape should export via documented unrotated fallback: {:?}",
+            result
+        );
+
+        let pdf_bytes = std::fs::read(&output_path).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+    }
+
+    #[test]
+    fn test_export_with_german_title_and_month_grid_text() {
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let request = PdfExportRequest {
+            page: Some(PdfPageConfig {
+                width_mm: 210.0,
+                height_mm: 297.0,
+                background: Some("#ffffff".to_string()),
+            }),
+            images: vec![],
+            texts: vec![
+                pdf_text(|text| {
+                    text.content = "März Grüße 2027".to_string();
+                    text.x_mm = 20.0;
+                    text.y_mm = 18.0;
+                    text.width_mm = 170.0;
+                    text.height_mm = 20.0;
+                    text.font_family = "\"Caveat\", cursive".to_string();
+                    text.font_size = 28.0;
+                    text.text_align = Some("center".to_string());
+                }),
+                pdf_text(|text| {
+                    text.content =
+                        "Mo Di Mi Do Fr Sa So\n 1  2  3  4  5  6  7\n 8  9 10 11 12 13 14"
+                            .to_string();
+                    text.x_mm = 25.0;
+                    text.y_mm = 55.0;
+                    text.width_mm = 160.0;
+                    text.height_mm = 45.0;
+                    text.font_family = "Courier New, Courier, monospace".to_string();
+                    text.font_size = 10.0;
+                    text.letter_spacing = Some(0.1);
+                }),
+            ],
+            shapes: vec![],
+            elements: vec![],
+            pages: vec![],
+            output_path: output_path.clone(),
+        };
+
+        let result = export_pdf(&request);
+        assert!(
+            result.is_ok(),
+            "Failed to export PDF with German text/date grid: {:?}",
+            result
+        );
+
+        let pdf_bytes = std::fs::read(&output_path).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+        assert!(pdf_bytes.len() > 1000, "PDF seems too small");
     }
 }

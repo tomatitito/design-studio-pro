@@ -1,6 +1,7 @@
 export type {
   ElementType,
   ShapeKind,
+  TextAlign,
   Position,
   Size,
   BaseElement,
@@ -11,9 +12,11 @@ export type {
   Element,
 } from "./element";
 
-export type { Page } from "./page";
+export type { Page, PageCalendarMetadata } from "./page";
 
-export type { Project, ProjectSettings } from "./project";
+export type { CalendarElementRole, CalendarMonth, CalendarPageRole, CalendarThemeId } from "./calendar";
+
+export type { CalendarSettings, Project, ProjectSettings, ProjectType } from "./project";
 
 export type { Asset } from "./asset";
 

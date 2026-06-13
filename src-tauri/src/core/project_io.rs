@@ -5,7 +5,7 @@
 //! - assets/: original asset files
 //! - thumbnails/: generated thumbnail files
 
-use crate::models::{Asset, Project};
+use crate::models::{Asset, Element, ElementType, Project};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -124,6 +124,51 @@ pub struct LoadedProject {
     pub extract_dir: String,
 }
 
+#[derive(Debug, Clone)]
+struct AssetPathRewrite {
+    asset_id: String,
+    original_path: String,
+    extracted_path: String,
+}
+
+fn rewrite_image_element_sources(project: &mut Project, rewrites: &[AssetPathRewrite]) {
+    for page in &mut project.pages {
+        for element in &mut page.elements {
+            rewrite_image_element_source(element, rewrites);
+        }
+    }
+}
+
+fn rewrite_image_element_source(element: &mut Element, rewrites: &[AssetPathRewrite]) {
+    match &mut element.element_type {
+        ElementType::Image { asset_id, src, .. } => {
+            let matching_rewrite = asset_id
+                .as_deref()
+                .and_then(|id| rewrites.iter().find(|rewrite| rewrite.asset_id == id))
+                .or_else(|| {
+                    rewrites
+                        .iter()
+                        .find(|rewrite| rewrite.asset_id == element.id)
+                })
+                .or_else(|| {
+                    rewrites
+                        .iter()
+                        .find(|rewrite| rewrite.original_path == *src)
+                });
+
+            if let Some(rewrite) = matching_rewrite {
+                src.clone_from(&rewrite.extracted_path);
+            }
+        }
+        ElementType::Group { children } => {
+            for child in children {
+                rewrite_image_element_source(child, rewrites);
+            }
+        }
+        ElementType::Text { .. } | ElementType::Shape { .. } => {}
+    }
+}
+
 /// Loads a project from a .dsproj ZIP archive.
 ///
 /// Extracts assets and thumbnails into subdirectories under `extract_dir`.
@@ -198,9 +243,14 @@ pub fn load_project(archive_path: &str, extract_dir: &str) -> Result<LoadedProje
             .map_err(|e| format!("Failed to extract '{}': {}", entry_name, e))?;
     }
 
-    // Update asset paths to point to extracted locations
+    // Update asset paths to point to extracted locations.
+    // Then rewrite image element src fields through the explicit asset contract,
+    // so reopened archives keep rendering/exporting even if original source
+    // files have been moved or deleted.
     let mut updated_manifest = manifest;
+    let mut asset_path_rewrites = Vec::new();
     for asset in &mut updated_manifest.assets {
+        let original_asset_path = asset.file_path.clone();
         let file_name = Path::new(&asset.file_path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -208,7 +258,13 @@ pub fn load_project(archive_path: &str, extract_dir: &str) -> Result<LoadedProje
 
         let extracted_path = assets_dir.join(file_name);
         if extracted_path.exists() {
-            asset.file_path = extracted_path.to_string_lossy().to_string();
+            let extracted_asset_path = extracted_path.to_string_lossy().to_string();
+            asset.file_path = extracted_asset_path.clone();
+            asset_path_rewrites.push(AssetPathRewrite {
+                asset_id: asset.id.clone(),
+                original_path: original_asset_path,
+                extracted_path: extracted_asset_path,
+            });
         }
 
         if let Some(ref thumb_path) = asset.thumbnail_path {
@@ -224,6 +280,8 @@ pub fn load_project(archive_path: &str, extract_dir: &str) -> Result<LoadedProje
         }
     }
 
+    rewrite_image_element_sources(&mut updated_manifest.project, &asset_path_rewrites);
+
     Ok(LoadedProject {
         manifest: updated_manifest,
         extract_dir: extract_dir.to_string(),
@@ -233,7 +291,10 @@ pub fn load_project(archive_path: &str, extract_dir: &str) -> Result<LoadedProje
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Dimensions, MeasurementUnit, Orientation, Page, ProjectSettings};
+    use crate::models::{
+        CalendarSettings, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page,
+        PageCalendarMetadata, Position, ProjectSettings, ProjectType, Size,
+    };
     use image::{ImageBuffer, Rgba};
     use tempfile::TempDir;
 
@@ -241,9 +302,13 @@ mod tests {
         Project {
             id: "proj-test-001".to_string(),
             name: "Test Project".to_string(),
+            project_type: ProjectType::PhotoPage,
+            calendar: None,
             pages: vec![Page {
                 id: "page1".to_string(),
                 name: "Main Page".to_string(),
+                role: None,
+                calendar: None,
                 elements: vec![],
                 width: 1920.0,
                 height: 1080.0,
@@ -430,6 +495,111 @@ mod tests {
     }
 
     #[test]
+    fn save_load_roundtrip_preserves_calendar_contract_fields() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("calendar-roundtrip.dsproj");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        let mut project = create_test_project();
+        project.project_type = ProjectType::Calendar;
+        project.calendar = Some(CalendarSettings {
+            year: 2031,
+            locale: "de-DE".to_string(),
+            theme_id: Some("forest".to_string()),
+        });
+        project.pages = vec![Page {
+            id: "calendar-month-1".to_string(),
+            name: "Januar".to_string(),
+            role: Some("month".to_string()),
+            calendar: Some(PageCalendarMetadata { month: 1 }),
+            elements: vec![
+                Element {
+                    id: "photo-slot-1".to_string(),
+                    element_type: ElementType::Image {
+                        asset_id: None,
+                        src: "".to_string(),
+                        alt: "Photo placeholder".to_string(),
+                        border_style: None,
+                        border_color: None,
+                        border_width: None,
+                    },
+                    role: Some("photo-placeholder".to_string()),
+                    position: Position { x: 10.0, y: 20.0 },
+                    size: Size {
+                        width: 100.0,
+                        height: 75.0,
+                    },
+                    rotation: 0.0,
+                    opacity: 1.0,
+                    z_index: 0,
+                    locked: false,
+                    visible: true,
+                },
+                Element {
+                    id: "month-label-1".to_string(),
+                    element_type: ElementType::Text {
+                        content: "Januar".to_string(),
+                        font_family: "Arial".to_string(),
+                        font_size: 24.0,
+                        color: "#000000".to_string(),
+                        font_weight: Some("600".to_string()),
+                        text_align: Some("center".to_string()),
+                        letter_spacing: Some(0.0),
+                    },
+                    role: Some("month-label".to_string()),
+                    position: Position { x: 0.0, y: 0.0 },
+                    size: Size {
+                        width: 100.0,
+                        height: 30.0,
+                    },
+                    rotation: 0.0,
+                    opacity: 1.0,
+                    z_index: 1,
+                    locked: false,
+                    visible: true,
+                },
+            ],
+            width: 210.0,
+            height: 297.0,
+            background_color: "#FFFFFF".to_string(),
+            order: 1,
+        }];
+
+        save_project(output_path.to_str().unwrap(), &project, &[]).unwrap();
+
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
+
+        assert_eq!(loaded.manifest.project.project_type, ProjectType::Calendar);
+        assert_eq!(loaded.manifest.project.calendar, project.calendar);
+        assert_eq!(
+            loaded
+                .manifest
+                .project
+                .calendar
+                .as_ref()
+                .and_then(|calendar| calendar.theme_id.as_deref()),
+            Some("forest")
+        );
+        assert_eq!(
+            loaded.manifest.project.pages[0].role.as_deref(),
+            Some("month")
+        );
+        assert_eq!(
+            loaded.manifest.project.pages[0].calendar,
+            Some(PageCalendarMetadata { month: 1 })
+        );
+        assert_eq!(
+            loaded.manifest.project.pages[0].elements[0].role.as_deref(),
+            Some("photo-placeholder")
+        );
+        assert_eq!(
+            loaded.manifest.project.pages[0].elements[1].role.as_deref(),
+            Some("month-label")
+        );
+    }
+
+    #[test]
     fn save_load_roundtrip_preserves_assets() {
         let temp_dir = TempDir::new().unwrap();
         let output_path = temp_dir.path().join("roundtrip.dsproj");
@@ -492,6 +662,124 @@ mod tests {
         // Paths should be updated to point to extracted location
         assert!(loaded_asset.file_path.contains("extracted"));
         assert_ne!(loaded_asset.file_path, asset.file_path);
+    }
+
+    #[test]
+    fn load_project_rewrites_image_element_src_to_extracted_asset() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("test.dsproj");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        let mut project = create_test_project();
+        let asset = create_test_asset(&temp_dir);
+        let original_asset_path = asset.file_path.clone();
+        project.pages[0].elements.push(Element {
+            id: asset.id.clone(),
+            element_type: ElementType::Image {
+                asset_id: Some(asset.id.clone()),
+                src: original_asset_path.clone(),
+                alt: asset.name.clone(),
+                border_style: None,
+                border_color: None,
+                border_width: None,
+            },
+            role: None,
+            position: Position { x: 10.0, y: 20.0 },
+            size: Size {
+                width: 100.0,
+                height: 75.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        });
+
+        save_project(output_path.to_str().unwrap(), &project, &[asset]).unwrap();
+        fs::remove_file(&original_asset_path).unwrap();
+
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
+
+        let loaded_element = &loaded.manifest.project.pages[0].elements[0];
+        match &loaded_element.element_type {
+            ElementType::Image { src, .. } => {
+                assert_ne!(src, &original_asset_path);
+                assert!(src.contains("extracted"));
+                assert!(Path::new(src).exists());
+            }
+            _ => panic!("expected image element"),
+        }
+    }
+
+    #[test]
+    fn load_project_rewrites_legacy_and_grouped_image_sources_by_original_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("test.dsproj");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        let mut project = create_test_project();
+        let asset = create_test_asset(&temp_dir);
+        let original_asset_path = asset.file_path.clone();
+        let legacy_image = Element {
+            id: "legacy-image-element".to_string(),
+            element_type: ElementType::Image {
+                asset_id: None,
+                src: original_asset_path.clone(),
+                alt: asset.name.clone(),
+                border_style: None,
+                border_color: None,
+                border_width: None,
+            },
+            role: None,
+            position: Position { x: 10.0, y: 20.0 },
+            size: Size {
+                width: 100.0,
+                height: 75.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        };
+        project.pages[0].elements.push(Element {
+            id: "group-1".to_string(),
+            element_type: ElementType::Group {
+                children: vec![legacy_image],
+            },
+            role: None,
+            position: Position { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 100.0,
+                height: 75.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        });
+
+        save_project(output_path.to_str().unwrap(), &project, &[asset]).unwrap();
+        fs::remove_file(&original_asset_path).unwrap();
+
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
+
+        let loaded_group = &loaded.manifest.project.pages[0].elements[0];
+        match &loaded_group.element_type {
+            ElementType::Group { children } => match &children[0].element_type {
+                ElementType::Image { src, .. } => {
+                    assert_ne!(src, &original_asset_path);
+                    assert!(src.contains("extracted"));
+                    assert!(Path::new(src).exists());
+                }
+                _ => panic!("expected child image element"),
+            },
+            _ => panic!("expected group element"),
+        }
     }
 
     #[test]

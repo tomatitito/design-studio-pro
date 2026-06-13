@@ -1,7 +1,9 @@
-import { FabricImage } from "fabric";
+import { FabricImage, Rect, Textbox } from "fabric";
 import type { Canvas as FabricCanvas, FabricObject } from "fabric";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Element, ImageElement, Page } from "../types";
+import type { Element, ImageElement, Page, ShapeElement, TextElement } from "../types";
+import { getTextAlign, getTextFontWeight, getTextLetterSpacing } from "../textStyles";
+import { bindImageElementToFabricObject } from "./documentAdapter";
 import { setElementId } from "./handlers";
 
 const PAGE_SHEET_FLAG = "isPageSheet";
@@ -49,6 +51,8 @@ function applyBaseElementProps(
   origin: { left: number; top: number },
 ): void {
   obj.set({
+    originX: "left",
+    originY: "top",
     left: origin.left + element.position.x,
     top: origin.top + element.position.y,
     angle: element.rotation,
@@ -58,6 +62,9 @@ function applyBaseElementProps(
     evented: !element.locked,
   });
   setElementId(obj, element.id);
+  if (element.elementType === "image") {
+    bindImageElementToFabricObject(obj, element);
+  }
   markPageContent(obj);
   obj.setCoords();
 }
@@ -66,6 +73,19 @@ async function createImageObject(
   element: ImageElement,
   origin: { left: number; top: number },
 ): Promise<FabricObject> {
+  if (!element.src) {
+    const placeholder = new Rect({
+      width: element.size.width,
+      height: element.size.height,
+      fill: "#ffffff",
+      stroke: "#9ca3af",
+      strokeWidth: 1,
+      strokeDashArray: [4, 4],
+    });
+    applyBaseElementProps(placeholder as FabricObject, element, origin);
+    return placeholder as FabricObject;
+  }
+
   const image = await FabricImage.fromURL(convertFileSrc(element.src));
   const width = image.width ?? 0;
   const height = image.height ?? 0;
@@ -80,10 +100,48 @@ async function createImageObject(
     stroke: element.borderColor,
     strokeUniform: true,
   });
-  (image as unknown as Record<string, unknown>).originalFilePath = element.src;
   applyBaseElementProps(image as FabricObject, element, origin);
 
   return image as FabricObject;
+}
+
+function createTextObject(
+  element: TextElement,
+  origin: { left: number; top: number },
+): FabricObject {
+  const text = new Textbox(element.content, {
+    width: element.size.width,
+    height: element.size.height,
+    fontFamily: element.fontFamily,
+    fontSize: element.fontSize,
+    fill: element.color,
+    fontWeight: getTextFontWeight(element),
+    textAlign: getTextAlign(element),
+    charSpacing: getTextLetterSpacing(element) * 1000,
+    splitByGrapheme: true,
+  });
+
+  applyBaseElementProps(text as FabricObject, element, origin);
+
+  return text as FabricObject;
+}
+
+function createShapeObject(
+  element: ShapeElement,
+  origin: { left: number; top: number },
+): FabricObject | null {
+  if (element.shapeKind !== "rectangle") return null;
+
+  const shape = new Rect({
+    width: element.size.width,
+    height: element.size.height,
+    fill: element.fill,
+    stroke: element.stroke,
+    strokeWidth: element.strokeWidth,
+  });
+  applyBaseElementProps(shape as FabricObject, element, origin);
+
+  return shape as FabricObject;
 }
 
 async function createObjectForElement(
@@ -93,10 +151,13 @@ async function createObjectForElement(
   switch (element.elementType) {
     case "image":
       return createImageObject(element, origin);
+    case "text":
+      return createTextObject(element, origin);
+    case "shape":
+      return createShapeObject(element, origin);
     default:
-      // Rendering for text/shapes/groups is not implemented yet. Keep the
-      // switch exhaustive so image page switching works without leaking stale
-      // objects from other pages.
+      // Rendering for groups is not implemented yet. Keep the switch exhaustive
+      // so page switching works without leaking stale objects.
       return null;
   }
 }

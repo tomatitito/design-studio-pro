@@ -2,7 +2,7 @@
 
 use crate::commands::assets::AssetStore;
 use crate::core::project_io;
-use crate::models::{MeasurementUnit, Orientation, Project, ProjectSettings};
+use crate::models::{MeasurementUnit, Orientation, Project, ProjectSettings, ProjectType};
 use crate::utils::generate_id;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,8 @@ pub fn create_project(name: String, store: State<ProjectStore>) -> Result<Projec
     let project = Project {
         id: generate_id(),
         name,
+        project_type: ProjectType::PhotoPage,
+        calendar: None,
         pages: vec![],
         created_at: now.clone(),
         modified_at: now,
@@ -221,6 +223,8 @@ mod tests {
         let project = Project {
             id: generate_id(),
             name,
+            project_type: ProjectType::PhotoPage,
+            calendar: None,
             pages: vec![],
             created_at: now.clone(),
             modified_at: now,
@@ -290,6 +294,7 @@ mod tests {
         assert_eq!(project.settings.height, 1080.0);
         assert_eq!(project.settings.orientation, Orientation::Landscape);
         assert_eq!(project.settings.unit, MeasurementUnit::Px);
+        assert_eq!(project.project_type, ProjectType::PhotoPage);
     }
 
     #[test]

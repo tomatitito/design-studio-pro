@@ -13,8 +13,10 @@ pub mod project;
 // Re-export all types for convenience
 pub use asset::{Asset, Dimensions};
 pub use element::{Element, ElementType, Position, ShapeKind, Size};
-pub use page::Page;
-pub use project::{MeasurementUnit, Orientation, Project, ProjectSettings};
+pub use page::{Page, PageCalendarMetadata};
+pub use project::{
+    CalendarSettings, MeasurementUnit, Orientation, Project, ProjectSettings, ProjectType,
+};
 
 /// Metadata for a design project.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addImageToCanvas } from "../canvas/importers";
-import { useProjectStore } from "../stores";
+import { addImageToCanvas, getDroppedImageFilePath } from "../canvas/importers";
+import { useProjectStore, useUIStore } from "../stores";
 import type { Asset } from "../types";
 
 const { fabricImageFromURL } = vi.hoisted(() => ({
@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 describe("addImageToCanvas", () => {
   beforeEach(() => {
     fabricImageFromURL.mockReset();
+    useUIStore.setState({ selectedElementIds: [] });
     useProjectStore.setState({
       currentProject: {
         id: "project-1",
@@ -115,6 +116,103 @@ describe("addImageToCanvas", () => {
     expect(pageElements[0].position.y).toBeCloseTo((1188 - expectedHeight) / 2);
     expect(pageElements[0].size.width).toBeCloseTo(expectedWidth);
     expect(pageElements[0].size.height).toBeCloseTo(expectedHeight);
+    expect(pageElements[0]).toMatchObject({ assetId: "asset-1", src: "/tmp/photo.jpg" });
+    expect(canvas.add).toHaveBeenCalledTimes(1);
+    expect(canvas.add).toHaveBeenCalledWith(image);
+    expect(canvas.setActiveObject).toHaveBeenCalledWith(image);
+  });
+
+  it("replaces an empty calendar photo placeholder when importing on the title page", async () => {
+    const image = {
+      width: 800,
+      height: 400,
+      scaleX: 1,
+      scaleY: 1,
+      left: 0,
+      top: 0,
+      set: vi.fn((update: Record<string, unknown>) => {
+        Object.assign(image, update);
+      }),
+    };
+    fabricImageFromURL.mockResolvedValue(image);
+    useProjectStore.setState((state) => ({
+      currentProject: state.currentProject
+        ? {
+            ...state.currentProject,
+            projectType: "calendar",
+            calendar: { year: 2031, locale: "de-DE" },
+            pages: [
+              {
+                ...state.currentProject.pages[0],
+                role: "title",
+                elements: [
+                  {
+                    id: "title-slot",
+                    elementType: "image",
+                    role: "photo-placeholder",
+                    src: "",
+                    alt: "Photo placeholder",
+                    position: { x: 18, y: 22 },
+                    size: { width: 174, height: 92 },
+                    rotation: 0,
+                    opacity: 1,
+                    zIndex: 1,
+                    locked: false,
+                    visible: true,
+                  },
+                ],
+              },
+            ],
+          }
+        : null,
+    }));
+
+    const sheet = {
+      isPageSheet: true,
+      left: 100,
+      top: 80,
+      width: 210,
+      height: 297,
+      scaleX: 1,
+      scaleY: 1,
+    };
+    const canvas = {
+      viewportTransform: [1, 0, 0, 1, 0, 0],
+      getZoom: vi.fn(() => 1),
+      getWidth: vi.fn(() => 800),
+      getHeight: vi.fn(() => 600),
+      getObjects: vi.fn(() => [sheet]),
+      add: vi.fn(),
+      setActiveObject: vi.fn(),
+      requestRenderAll: vi.fn(),
+    };
+    const asset: Asset = {
+      id: "asset-title",
+      name: "title.jpg",
+      filePath: "/tmp/title.jpg",
+      thumbnailPath: null,
+      fileSize: 0,
+      mimeType: "image/jpeg",
+      dimensions: { width: 800, height: 400 },
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+
+    await addImageToCanvas(canvas as never, asset);
+
+    const pageElements = useProjectStore.getState().currentProject?.pages[0]?.elements ?? [];
+    expect(pageElements).toHaveLength(1);
+    expect(pageElements[0]).toMatchObject({
+      id: "title-slot",
+      elementType: "image",
+      role: "photo-placeholder",
+      assetId: "asset-title",
+      src: "/tmp/title.jpg",
+      position: { x: 18, y: 22 },
+      size: { width: 174, height: 92 },
+    });
+    expect(canvas.add).not.toHaveBeenCalled();
+    expect(canvas.setActiveObject).not.toHaveBeenCalled();
+    expect(useUIStore.getState().selectedElementIds).toEqual(["title-slot"]);
   });
 
   it("persists explicit drop positions relative to the page sheet", async () => {
@@ -167,5 +265,23 @@ describe("addImageToCanvas", () => {
     expect(image.top).toBe(200);
     const pageElements = useProjectStore.getState().currentProject?.pages[0]?.elements ?? [];
     expect(pageElements[0].position).toEqual({ x: 150, y: 120 });
+    expect(canvas.add).toHaveBeenCalledTimes(1);
+    expect(canvas.add).toHaveBeenCalledWith(image);
+    expect(canvas.setActiveObject).toHaveBeenCalledWith(image);
+  });
+});
+
+describe("getDroppedImageFilePath", () => {
+  it("returns null for browser File drops without a desktop filesystem path", () => {
+    const file = new File([""], "photo.png", { type: "image/png" });
+
+    expect(getDroppedImageFilePath(file)).toBeNull();
+  });
+
+  it("returns an absolute desktop path when the runtime provides one", () => {
+    const file = new File([""], "photo.png", { type: "image/png" });
+    Object.defineProperty(file, "path", { value: "/Users/me/photo.png" });
+
+    expect(getDroppedImageFilePath(file)).toBe("/Users/me/photo.png");
   });
 });

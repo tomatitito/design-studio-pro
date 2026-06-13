@@ -4,7 +4,9 @@ import { FabricImage } from "fabric";
 import type { Canvas as FabricCanvas } from "fabric";
 import type { Asset, ImageElement, Position } from "../types";
 import { setElementId } from "./handlers";
-import { getActiveProjectPage, useProjectStore } from "../stores";
+import { setFabricImageSourcePath } from "./documentAdapter";
+import { getActiveProjectPage, useProjectStore, useUIStore } from "../stores";
+import { findPagePhotoPlaceholders, replacePagePhotoPlaceholder } from "../calendarContracts";
 
 /** Image file extensions supported for import. */
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif"];
@@ -109,6 +111,17 @@ export function getDroppedImageFiles(event: DragEvent): File[] {
 }
 
 /**
+ * Returns an absolute filesystem path for a dropped File when the desktop
+ * runtime provides one. Browser-only File drops intentionally return null;
+ * passing just `file.name` to Rust would not satisfy the import_asset contract.
+ */
+export function getDroppedImageFilePath(file: File): string | null {
+  const record = file as unknown as Record<string, unknown>;
+  const path = record.path;
+  return typeof path === "string" && path.startsWith("/") ? path : null;
+}
+
+/**
  * Creates a Fabric.js image from an imported Asset and adds it to the canvas.
  *
  * Also creates a corresponding ImageElement in the project store for the
@@ -184,46 +197,77 @@ export async function addImageToCanvas(
     strokeUniform: true,
   });
 
-  // Store the original filesystem path so the export pipeline can reference
-  // the actual file instead of the convertFileSrc URL.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (img as any).originalFilePath = asset.filePath;
+  // Store the document source path so the export pipeline can reference the
+  // actual file instead of the convertFileSrc URL.
+  setFabricImageSourcePath(img, asset.filePath);
 
-  setElementId(img, asset.id);
-  canvas.add(img);
-  canvas.setActiveObject(img);
-  canvas.requestRenderAll();
-
-  // Persist the element in the project store
+  // Persist the element in the project store. If the user has a calendar photo
+  // placeholder selected (or the page has an empty placeholder), replace that
+  // slot instead of appending an unrelated image.
   const projectStore = useProjectStore.getState();
   const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
+  let shouldAddImageToCanvas = true;
   if (page) {
-    const imageElement: ImageElement = {
-      id: asset.id,
-      elementType: "image",
-      src: asset.filePath,
-      alt: asset.name,
-      position: {
-        x: (img.left ?? 0) - (pageSheet?.left ?? 0),
-        y: (img.top ?? 0) - (pageSheet?.top ?? 0),
-      },
-      size: {
-        width: (img.width ?? 0) * (img.scaleX ?? 1),
-        height: (img.height ?? 0) * (img.scaleY ?? 1),
-      },
-      rotation: 0,
-      opacity: 1,
-      zIndex: page.elements.length,
-      locked: false,
-      visible: true,
-      borderStyle: "custom",
-      borderWidth: 0,
-    };
-    projectStore.updatePage(page.id, {
-      elements: [...page.elements, imageElement],
-    });
-    projectStore.setDirty(true);
+    const uiStore = useUIStore.getState();
+    const selectedIds = new Set(uiStore.selectedElementIds);
+    const placeholders = findPagePhotoPlaceholders(page);
+    const placeholder =
+      placeholders.find((candidate) => selectedIds.has(candidate.id)) ??
+      placeholders.find((candidate) => !candidate.src);
+
+    if (placeholder) {
+      shouldAddImageToCanvas = false;
+      setElementId(img, placeholder.id);
+      projectStore.updatePage(
+        page.id,
+        replacePagePhotoPlaceholder(page, placeholder.id, {
+          src: asset.filePath,
+          assetId: asset.id,
+          alt: asset.name,
+          borderStyle: "custom",
+          borderWidth: 0,
+        }),
+      );
+      projectStore.setDirty(true);
+      uiStore.setSelectedElements([placeholder.id]);
+    } else {
+      setElementId(img, asset.id);
+      const imageElement: ImageElement = {
+        id: asset.id,
+        elementType: "image",
+        assetId: asset.id,
+        src: asset.filePath,
+        alt: asset.name,
+        position: {
+          x: (img.left ?? 0) - (pageSheet?.left ?? 0),
+          y: (img.top ?? 0) - (pageSheet?.top ?? 0),
+        },
+        size: {
+          width: (img.width ?? 0) * (img.scaleX ?? 1),
+          height: (img.height ?? 0) * (img.scaleY ?? 1),
+        },
+        rotation: 0,
+        opacity: 1,
+        zIndex: page.elements.length,
+        locked: false,
+        visible: true,
+        borderStyle: "custom",
+        borderWidth: 0,
+      };
+      projectStore.updatePage(page.id, {
+        elements: [...page.elements, imageElement],
+      });
+      projectStore.setDirty(true);
+    }
+  } else {
+    setElementId(img, asset.id);
   }
+
+  if (shouldAddImageToCanvas) {
+    canvas.add(img);
+    canvas.setActiveObject(img);
+  }
+  canvas.requestRenderAll();
 
   return img;
 }

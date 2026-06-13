@@ -12,7 +12,20 @@ import {
 import { selectActivePage, useProjectStore, useUIStore, type Panel } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
 import { AssetLibrary } from "./AssetLibrary";
-import type { Page } from "../types";
+import {
+  CALENDAR_FONT_OPTIONS,
+  getTextAlign,
+  getTextFontWeight,
+  getTextLetterSpacing,
+} from "../textStyles";
+import {
+  applyCalendarPhotoLayoutPreset,
+  applyCalendarThemeToProject,
+  CALENDAR_PHOTO_LAYOUT_PRESETS,
+  CALENDAR_THEME_PRESETS,
+  DEFAULT_CALENDAR_THEME_ID,
+} from "../calendarContracts";
+import type { Page, TextAlign, TextElement } from "../types";
 
 const PANELS: { id: Panel; label: string }[] = [
   { id: "layers", label: "Layers" },
@@ -30,6 +43,7 @@ export function Sidebar() {
   const activePageId = useProjectStore((s) => s.activePageId);
   const selectedElementIds = useUIStore((s) => s.selectedElementIds);
   const setActivePage = useProjectStore((s) => s.setActivePage);
+  const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
   const addPage = useProjectStore((s) => s.addPage);
   const removePage = useProjectStore((s) => s.removePage);
   const updatePage = useProjectStore((s) => s.updatePage);
@@ -48,10 +62,37 @@ export function Sidebar() {
     if (!currentPage) return "#ffffff";
     return currentPage.backgroundColor.startsWith("#") ? currentPage.backgroundColor : "#ffffff";
   }, [currentPage]);
+  const selectedTextElement = useMemo<TextElement | null>(() => {
+    if (!currentPage || selectedElementIds.length !== 1) return null;
+    const element = currentPage.elements.find((item) => item.id === selectedElementIds[0]);
+    return element?.elementType === "text" ? element : null;
+  }, [currentPage, selectedElementIds]);
+  const calendarPhotoLayoutGroups = useMemo(
+    () =>
+      [1, 2, 3, 4].map((count) => ({
+        count,
+        presets: CALENDAR_PHOTO_LAYOUT_PRESETS.filter((preset) => preset.photoCount === count),
+      })),
+    [],
+  );
+  const showCalendarPhotoLayouts =
+    currentProject?.projectType === "calendar" && currentPage?.role === "month";
+  const showCalendarTitleLayoutHelp =
+    currentProject?.projectType === "calendar" && currentPage?.role === "title";
+  const showCalendarThemes = currentProject?.projectType === "calendar";
+  const activeCalendarThemeId = currentProject?.calendar?.themeId ?? DEFAULT_CALENDAR_THEME_ID;
 
   const applyBackground = (backgroundColor: string) => {
     if (!currentPage) return;
     updatePage(currentPage.id, { backgroundColor });
+    setDirty(true);
+  };
+
+  const applyCalendarTheme = (themeId: string) => {
+    if (!currentProject) return;
+    const themedProject = applyCalendarThemeToProject(currentProject, themeId);
+    if (themedProject === currentProject) return;
+    setCurrentProject(themedProject);
     setDirty(true);
   };
 
@@ -92,6 +133,59 @@ export function Sidebar() {
     setDirty(true);
   };
 
+  const updateSelectedText = (
+    patch: Partial<
+      Pick<
+        TextElement,
+        | "content"
+        | "fontFamily"
+        | "fontSize"
+        | "color"
+        | "fontWeight"
+        | "textAlign"
+        | "letterSpacing"
+      >
+    >,
+  ) => {
+    if (!currentPage || !selectedTextElement) return;
+    const elements = currentPage.elements.map((element) =>
+      element.id === selectedTextElement.id && element.elementType === "text"
+        ? { ...element, ...patch }
+        : element,
+    );
+
+    updatePage(currentPage.id, { elements });
+    setDirty(true);
+
+    const fabricUpdate: Record<string, unknown> = {};
+    if (patch.content !== undefined) fabricUpdate.text = patch.content;
+    if (patch.fontFamily !== undefined) fabricUpdate.fontFamily = patch.fontFamily;
+    if (patch.fontSize !== undefined) fabricUpdate.fontSize = patch.fontSize;
+    if (patch.color !== undefined) fabricUpdate.fill = patch.color;
+    if (patch.fontWeight !== undefined) fabricUpdate.fontWeight = patch.fontWeight;
+    if (patch.textAlign !== undefined) fabricUpdate.textAlign = patch.textAlign;
+    if (patch.letterSpacing !== undefined) fabricUpdate.charSpacing = patch.letterSpacing * 1000;
+
+    const fabricText = canvas
+      ?.getObjects()
+      .find(
+        (obj) => (obj as unknown as { elementId?: string }).elementId === selectedTextElement.id,
+      ) as unknown as
+      | { set?: (update: Record<string, unknown>) => void; setCoords?: () => void }
+      | undefined;
+    fabricText?.set?.(fabricUpdate);
+    fabricText?.setCoords?.();
+    canvas?.requestRenderAll();
+  };
+
+  const applyCalendarPhotoLayout = (presetId: string) => {
+    if (!currentPage) return;
+    const nextPage = applyCalendarPhotoLayoutPreset(currentPage, presetId);
+    if (nextPage === currentPage) return;
+    updatePage(currentPage.id, { elements: nextPage.elements });
+    setDirty(true);
+  };
+
   const applyImageBorder = (mode: "selected" | "all") => {
     if (!currentPage) return;
     const resolvedStyle = resolveImageBorderStyle(borderStyle, borderColor, borderWidth);
@@ -116,7 +210,7 @@ export function Sidebar() {
 
   if (!sidebarOpen) {
     return (
-      <div className="flex flex-col border-l border-neutral-700 bg-neutral-800">
+      <div className="flex h-full min-h-0 flex-col border-l border-neutral-700 bg-neutral-800">
         <button
           onClick={toggleSidebar}
           className="px-2 py-3 text-xs text-neutral-400 hover:text-white"
@@ -131,7 +225,7 @@ export function Sidebar() {
 
   return (
     <div
-      className="flex w-64 flex-col border-l border-neutral-700 bg-neutral-800"
+      className="flex h-full min-h-0 w-64 flex-col border-l border-neutral-700 bg-neutral-800"
       data-testid="sidebar"
     >
       {/* Panel tabs */}
@@ -161,7 +255,7 @@ export function Sidebar() {
       </div>
 
       {/* Panel content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         {activePanel === "assets" && <AssetLibrary />}
 
         {activePanel === "layers" && (
@@ -169,7 +263,10 @@ export function Sidebar() {
         )}
 
         {activePanel === "properties" && (
-          <div className="space-y-4 p-3 text-xs text-neutral-300">
+          <div
+            className="h-full space-y-4 overflow-y-auto p-3 text-xs text-neutral-300"
+            data-testid="properties-panel"
+          >
             <div>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
                 Photo Sheet Background
@@ -223,6 +320,206 @@ export function Sidebar() {
                 })}
               </div>
             </div>
+
+            {showCalendarThemes && (
+              <div>
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  Calendar Theme
+                </div>
+                <div className="grid grid-cols-2 gap-2 rounded-md border border-neutral-700 bg-neutral-900/60 p-3">
+                  {CALENDAR_THEME_PRESETS.map((preset) => {
+                    const isActive = activeCalendarThemeId === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => applyCalendarTheme(preset.id)}
+                        className={`rounded border p-2 text-left transition ${
+                          isActive
+                            ? "border-blue-400 bg-blue-500/15"
+                            : "border-neutral-700 bg-neutral-800 hover:border-blue-400"
+                        }`}
+                        data-testid={`calendar-theme-${preset.id}`}
+                      >
+                        <div className="mb-2 flex overflow-hidden rounded border border-white/10">
+                          {preset.swatches.map((color) => (
+                            <span
+                              key={color}
+                              className="h-5 flex-1"
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+                        <span className="block text-[11px] font-medium text-white">
+                          {preset.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {showCalendarTitleLayoutHelp && (
+              <div
+                className="rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-[11px] text-blue-100"
+                data-testid="calendar-title-layout-help"
+              >
+                Photo layout presets are available on month pages. Select January or another month
+                in Pages to change its photo layout.
+              </div>
+            )}
+
+            {showCalendarPhotoLayouts && (
+              <div>
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  Calendar Photo Layout
+                </div>
+                <div className="space-y-3 rounded-md border border-neutral-700 bg-neutral-900/60 p-3">
+                  {calendarPhotoLayoutGroups.map(({ count, presets }) => (
+                    <div key={count}>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-500">
+                        {count} photo{count === 1 ? "" : "s"}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {presets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => applyCalendarPhotoLayout(preset.id)}
+                            className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-left text-[11px] text-white transition hover:border-blue-400"
+                            data-testid={`calendar-photo-layout-${preset.id}`}
+                          >
+                            <span className="block font-medium">{preset.label}</span>
+                            <span className="text-[10px] text-neutral-500">
+                              {preset.photoCount} slots
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedTextElement && (
+              <div>
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  Text
+                </div>
+                <div className="space-y-3 rounded-md border border-neutral-700 bg-neutral-900/60 p-3">
+                  <label className="block">
+                    <span className="mb-2 block text-[11px] text-neutral-300">Content</span>
+                    <textarea
+                      value={selectedTextElement.content}
+                      onChange={(event) => updateSelectedText({ content: event.target.value })}
+                      className="min-h-24 w-full rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white"
+                      data-testid="text-content-input"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                    <span>Font</span>
+                    <select
+                      value={selectedTextElement.fontFamily}
+                      onChange={(event) => updateSelectedText({ fontFamily: event.target.value })}
+                      className="w-36 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white"
+                      data-testid="text-font-family-select"
+                    >
+                      {!CALENDAR_FONT_OPTIONS.some(
+                        (font) => font.family === selectedTextElement.fontFamily,
+                      ) && <option value={selectedTextElement.fontFamily}>Current font</option>}
+                      {CALENDAR_FONT_OPTIONS.map((font) => (
+                        <option key={font.id} value={font.family} title={font.description}>
+                          {font.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[11px] text-neutral-300">
+                      <span className="mb-1 block">Size</span>
+                      <input
+                        type="number"
+                        min={4}
+                        max={160}
+                        step={1}
+                        value={selectedTextElement.fontSize}
+                        onChange={(event) => {
+                          const parsed = Number(event.target.value);
+                          updateSelectedText({ fontSize: Number.isFinite(parsed) ? parsed : 4 });
+                        }}
+                        className="w-full rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-right text-[11px] text-white"
+                        data-testid="text-font-size-input"
+                      />
+                    </label>
+                    <label className="text-[11px] text-neutral-300">
+                      <span className="mb-1 block">Letter</span>
+                      <input
+                        type="number"
+                        min={-5}
+                        max={20}
+                        step={0.1}
+                        value={getTextLetterSpacing(selectedTextElement)}
+                        onChange={(event) => {
+                          const parsed = Number(event.target.value);
+                          updateSelectedText({
+                            letterSpacing: Number.isFinite(parsed) ? parsed : 0,
+                          });
+                        }}
+                        className="w-full rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-right text-[11px] text-white"
+                        data-testid="text-letter-spacing-input"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                    <span>Color</span>
+                    <input
+                      type="color"
+                      value={selectedTextElement.color}
+                      onChange={(event) => updateSelectedText({ color: event.target.value })}
+                      className="h-7 w-9 rounded border-0 bg-transparent p-0"
+                      data-testid="text-color-input"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                    <span>Weight</span>
+                    <select
+                      value={getTextFontWeight(selectedTextElement)}
+                      onChange={(event) => updateSelectedText({ fontWeight: event.target.value })}
+                      className="w-28 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white"
+                      data-testid="text-font-weight-select"
+                    >
+                      <option value="300">Light</option>
+                      <option value="400">Regular</option>
+                      <option value="600">Semi Bold</option>
+                      <option value="700">Bold</option>
+                    </select>
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 text-[11px] text-neutral-300">
+                    <span>Align</span>
+                    <select
+                      value={getTextAlign(selectedTextElement)}
+                      onChange={(event) =>
+                        updateSelectedText({ textAlign: event.target.value as TextAlign })
+                      }
+                      className="w-28 rounded border border-neutral-600 bg-neutral-800 px-2 py-1 text-[11px] text-white"
+                      data-testid="text-align-select"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                      <option value="justify">Justify</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            )}
 
             <div>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
@@ -302,7 +599,7 @@ export function Sidebar() {
         )}
 
         {activePanel === "pages" && (
-          <div className="flex h-full flex-col p-3 text-xs text-neutral-300">
+          <div className="flex h-full min-h-0 flex-col p-3 text-xs text-neutral-300">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
                 Pages
@@ -331,7 +628,10 @@ export function Sidebar() {
             )}
 
             {currentProject && orderedPages.length > 0 && (
-              <div className="space-y-2 overflow-y-auto pr-1" data-testid="pages-list">
+              <div
+                className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+                data-testid="pages-list"
+              >
                 {orderedPages.map((page, index) => {
                   const isActive = page.id === activePageId;
                   return (

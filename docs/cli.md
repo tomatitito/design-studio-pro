@@ -79,7 +79,7 @@ dsp new [OPTIONS] --output <PATH>
 | `--background <SPEC>`                 | Background preset, hex color, or `linear-gradient(...)` | `paper-white` |
 | `--border-style <STYLE>`              | Border style preset (`custom`, `matte-frame`, `gallery-frame`, `ornate-gold`, `walnut-frame`) | — |
 | `--border-color <HEX>`                | Border color to apply to images                          | —             |
-| `--border-width <N>`                  | Border width to apply to images                          | —             |
+| `--border-width <N>`                  | Border width in mm to apply to images                    | —             |
 | `--image-index <N>`                   | Zero-based image index to target (repeatable)            | —             |
 | `--all-images`                        | Apply border to all images                               | false         |
 | `-o, --output <PATH>`                 | Output `.dsproj` path (required)                        | —             |
@@ -139,7 +139,7 @@ dsp open <PROJECT> [OPTIONS]
 | `--background <SPEC>` | Replace the page background                   | unchanged        |
 | `--border-style <STYLE>`| Border style preset (`custom`, `matte-frame`, `gallery-frame`, `ornate-gold`, `walnut-frame`) | — |
 | `--border-color <HEX>`| Border color to apply to images               | —                |
-| `--border-width <N>`  | Border width to apply to images               | —                |
+| `--border-width <N>`  | Border width in mm to apply to images         | —                |
 | `--image-index <N>`   | Zero-based image index to target (repeatable) | —                |
 | `--all-images`        | Apply border to all images                    | false            |
 | `-o, --output <PATH>` | Output path                                   | overwrites input |

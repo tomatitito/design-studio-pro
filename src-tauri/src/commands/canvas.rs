@@ -113,7 +113,11 @@ mod tests {
                 font_family: "Arial".to_string(),
                 font_size: 16.0,
                 color: "#000000".to_string(),
+                font_weight: None,
+                text_align: None,
+                letter_spacing: None,
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 100.0,

@@ -35,6 +35,8 @@ pub enum ShapeKind {
 )]
 pub enum ElementType {
     Image {
+        #[serde(default)]
+        asset_id: Option<String>,
         src: String,
         alt: String,
         #[serde(default)]
@@ -49,6 +51,12 @@ pub enum ElementType {
         font_family: String,
         font_size: f64,
         color: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        font_weight: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_align: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        letter_spacing: Option<f64>,
     },
     Shape {
         shape_kind: ShapeKind,
@@ -68,6 +76,8 @@ pub struct Element {
     pub id: String,
     #[serde(flatten)]
     pub element_type: ElementType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     pub position: Position,
     pub size: Size,
     pub rotation: f64,
@@ -103,12 +113,14 @@ mod tests {
         let element = Element {
             id: "img1".to_string(),
             element_type: ElementType::Image {
+                asset_id: None,
                 src: "/path/to/image.png".to_string(),
                 alt: "Test image".to_string(),
                 border_style: None,
                 border_color: None,
                 border_width: None,
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 100.0,
@@ -134,7 +146,11 @@ mod tests {
                 font_family: "Arial".to_string(),
                 font_size: 16.0,
                 color: "#000000".to_string(),
+                font_weight: None,
+                text_align: None,
+                letter_spacing: None,
             },
+            role: None,
             position: Position { x: 10.0, y: 10.0 },
             size: Size {
                 width: 200.0,
@@ -165,6 +181,7 @@ mod tests {
                 stroke: "#000000".to_string(),
                 stroke_width: 2.0,
             },
+            role: None,
             position: Position { x: 50.0, y: 50.0 },
             size: Size {
                 width: 100.0,
@@ -191,7 +208,11 @@ mod tests {
                 font_family: "Arial".to_string(),
                 font_size: 12.0,
                 color: "#000000".to_string(),
+                font_weight: None,
+                text_align: None,
+                letter_spacing: None,
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 50.0,
@@ -209,6 +230,7 @@ mod tests {
             element_type: ElementType::Group {
                 children: vec![child],
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 200.0,
@@ -238,7 +260,11 @@ mod tests {
                 font_family: "Arial".to_string(),
                 font_size: 14.0,
                 color: "#000000".to_string(),
+                font_weight: None,
+                text_align: None,
+                letter_spacing: None,
             },
+            role: None,
             position: Position { x: 10.0, y: 20.0 },
             size: Size {
                 width: 100.0,

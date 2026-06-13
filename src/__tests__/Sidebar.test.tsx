@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Sidebar } from "../components/Sidebar";
 import { CanvasProvider } from "../components/CanvasContext";
 import { useProjectStore, useUIStore } from "../stores";
+import {
+  createCalendarMonthPage,
+  createCalendarTitlePage,
+  findPagePhotoPlaceholders,
+} from "../calendarContracts";
+import { CALENDAR_FONT_OPTIONS } from "../textStyles";
 import type { Project } from "../types";
 
 const TEST_PROJECT: Project = {
@@ -37,6 +43,197 @@ function renderSidebar() {
   );
 }
 
+describe("Sidebar text properties", () => {
+  beforeEach(() => {
+    useProjectStore.setState({
+      currentProject: {
+        ...structuredClone(TEST_PROJECT),
+        pages: [
+          {
+            ...structuredClone(TEST_PROJECT.pages[0]),
+            elements: [
+              {
+                id: "title-text",
+                elementType: "text",
+                role: "title-text",
+                content: "März Grüße 2027",
+                fontFamily: CALENDAR_FONT_OPTIONS[0].family,
+                fontSize: 24,
+                color: "#111111",
+                fontWeight: "400",
+                textAlign: "left",
+                letterSpacing: 0,
+                position: { x: 0, y: 0 },
+                size: { width: 160, height: 40 },
+                rotation: 0,
+                opacity: 1,
+                zIndex: 0,
+                locked: false,
+                visible: true,
+              },
+            ],
+          },
+        ],
+      },
+      projects: [],
+      activePageId: "page-1",
+      isDirty: false,
+    });
+    useUIStore.setState({
+      selectedTool: "select",
+      selectedElementIds: ["title-text"],
+      zoom: 1,
+      panOffset: { x: 0, y: 0 },
+      sidebarOpen: true,
+      activePanel: "properties",
+    });
+  });
+
+  it("renders the properties panel as a vertical scroll container", () => {
+    renderSidebar();
+
+    expect(screen.getByTestId("properties-panel")).toHaveClass("h-full", "overflow-y-auto");
+  });
+
+  it("updates selected calendar text styling controls", () => {
+    renderSidebar();
+
+    fireEvent.change(screen.getByTestId("text-font-family-select"), {
+      target: { value: CALENDAR_FONT_OPTIONS[2].family },
+    });
+    fireEvent.change(screen.getByTestId("text-font-size-input"), { target: { value: "32" } });
+    fireEvent.change(screen.getByTestId("text-color-input"), { target: { value: "#336699" } });
+    fireEvent.change(screen.getByTestId("text-font-weight-select"), { target: { value: "700" } });
+    fireEvent.change(screen.getByTestId("text-align-select"), { target: { value: "center" } });
+    fireEvent.change(screen.getByTestId("text-letter-spacing-input"), { target: { value: "1.5" } });
+
+    const text = useProjectStore
+      .getState()
+      .currentProject?.pages[0].elements.find((element) => element.id === "title-text");
+
+    expect(text).toMatchObject({
+      elementType: "text",
+      content: "März Grüße 2027",
+      fontFamily: CALENDAR_FONT_OPTIONS[2].family,
+      fontSize: 32,
+      color: "#336699",
+      fontWeight: "700",
+      textAlign: "center",
+      letterSpacing: 1.5,
+    });
+    expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+});
+
+describe("Sidebar calendar themes", () => {
+  beforeEach(() => {
+    useProjectStore.setState({
+      currentProject: {
+        ...structuredClone(TEST_PROJECT),
+        projectType: "calendar",
+        calendar: { year: 2031, locale: "de-DE", themeId: "classic" },
+        pages: [
+          createCalendarTitlePage({ id: "title", year: 2031 }),
+          createCalendarMonthPage(1, { id: "month-1", year: 2031 }),
+        ],
+      },
+      projects: [],
+      activePageId: "title",
+      isDirty: false,
+    });
+    useUIStore.setState({
+      selectedTool: "select",
+      selectedElementIds: [],
+      zoom: 1,
+      panOffset: { x: 0, y: 0 },
+      sidebarOpen: true,
+      activePanel: "properties",
+    });
+  });
+
+  it("applies a calendar theme to all calendar pages", () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByTestId("calendar-theme-ocean"));
+
+    const project = useProjectStore.getState().currentProject;
+    expect(project?.calendar?.themeId).toBe("ocean");
+    expect(project?.pages[0].elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "title-text", color: "#1e3a8a" }),
+        expect.objectContaining({ role: "photo-placeholder" }),
+      ]),
+    );
+    expect(project?.pages[1].elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "month-label", color: "#1e3a8a" }),
+        expect.objectContaining({ role: "date-grid", color: "#2563eb" }),
+        expect.objectContaining({ role: "photo-placeholder" }),
+      ]),
+    );
+    expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+});
+
+describe("Sidebar calendar photo layouts", () => {
+  beforeEach(() => {
+    useProjectStore.setState({
+      currentProject: {
+        ...structuredClone(TEST_PROJECT),
+        projectType: "calendar",
+        calendar: { year: 2031, locale: "de-DE" },
+        pages: [createCalendarMonthPage(1, { id: "month-1", year: 2031 })],
+      },
+      projects: [],
+      activePageId: "month-1",
+      isDirty: false,
+    });
+    useUIStore.setState({
+      selectedTool: "select",
+      selectedElementIds: [],
+      zoom: 1,
+      panOffset: { x: 0, y: 0 },
+      sidebarOpen: true,
+      activePanel: "properties",
+    });
+  });
+
+  it("renders grouped layout presets and applies one without removing the date grid", () => {
+    renderSidebar();
+
+    expect(screen.getByText("1 photo")).toBeInTheDocument();
+    expect(screen.getByText("2 photos")).toBeInTheDocument();
+    expect(screen.getByText("3 photos")).toBeInTheDocument();
+    expect(screen.getByText("4 photos")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("calendar-photo-layout-two-columns"));
+
+    const page = useProjectStore.getState().currentProject?.pages[0];
+    expect(page?.elements.some((element) => element.role === "date-grid")).toBe(true);
+    expect(page ? findPagePhotoPlaceholders(page) : []).toHaveLength(2);
+    expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+
+  it("explains that photo layout presets are hidden on title pages", () => {
+    useProjectStore.setState({
+      currentProject: {
+        ...structuredClone(TEST_PROJECT),
+        projectType: "calendar",
+        calendar: { year: 2031, locale: "de-DE" },
+        pages: [createCalendarTitlePage({ id: "title-page", year: 2031 })],
+      },
+      projects: [],
+      activePageId: "title-page",
+      isDirty: false,
+    });
+
+    renderSidebar();
+
+    expect(screen.getByTestId("calendar-title-layout-help")).toHaveTextContent("Select January");
+    expect(screen.queryByText("Calendar Photo Layout")).not.toBeInTheDocument();
+  });
+});
+
 describe("Sidebar pages panel", () => {
   beforeEach(() => {
     useProjectStore.setState({
@@ -53,6 +250,12 @@ describe("Sidebar pages panel", () => {
       sidebarOpen: true,
       activePanel: "pages",
     });
+  });
+
+  it("renders the pages list as a shrinkable scroll container", () => {
+    renderSidebar();
+
+    expect(screen.getByTestId("pages-list")).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
   });
 
   it("adds pages, switches active page, and deletes a non-final page", () => {

@@ -3,12 +3,23 @@
 use super::element::Element;
 use serde::{Deserialize, Serialize};
 
+/// Calendar-specific page metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PageCalendarMetadata {
+    pub month: u8,
+}
+
 /// A page within a design project.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Page {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<PageCalendarMetadata>,
     pub elements: Vec<Element>,
     pub width: f64,
     pub height: f64,
@@ -26,6 +37,8 @@ mod tests {
         let page = Page {
             id: "page1".to_string(),
             name: "Main Page".to_string(),
+            role: None,
+            calendar: None,
             elements: vec![],
             width: 1920.0,
             height: 1080.0,
@@ -48,7 +61,11 @@ mod tests {
                 font_family: "Arial".to_string(),
                 font_size: 16.0,
                 color: "#000000".to_string(),
+                font_weight: None,
+                text_align: None,
+                letter_spacing: None,
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 100.0,
@@ -64,6 +81,8 @@ mod tests {
         let page = Page {
             id: "page1".to_string(),
             name: "Page with element".to_string(),
+            role: None,
+            calendar: None,
             elements: vec![element],
             width: 800.0,
             height: 600.0,
@@ -80,6 +99,8 @@ mod tests {
         let page = Page {
             id: "page1".to_string(),
             name: "Test Page".to_string(),
+            role: None,
+            calendar: None,
             elements: vec![],
             width: 1024.0,
             height: 768.0,

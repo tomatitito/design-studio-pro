@@ -4,6 +4,7 @@ export {
   importImageViaDialog,
   isSupportedImageFile,
   getDroppedImageFiles,
+  getDroppedImageFilePath,
   addImageToCanvas,
 } from "./importers";
 export { attachZoomPanHandlers } from "./zoomPan";
@@ -11,6 +12,7 @@ export { attachGridOverlay, drawGrid, snapToGrid } from "./grid";
 export { attachSmartGuides } from "./guides";
 export { attachHistoryTracking, attachUndoRedoShortcuts, restoreSnapshot } from "./history";
 export { attachKeyboardShortcuts } from "./shortcuts";
+export { attachTextToolHandlers } from "./textTool";
 export {
   PAGE_PRESETS,
   DISPLAY_DPI,
@@ -26,7 +28,15 @@ export type { PagePreset } from "./sheet";
 export { BACKGROUND_PRESETS, getBackgroundPreviewStyle } from "../backgrounds";
 export { collectExportData, exportPdf } from "./export";
 export { renderPageContent } from "./pageRenderer";
-export type { PdfPageConfig, PdfImageElement, PdfPageExport, PdfExportRequest } from "./export";
+export type {
+  PdfPageConfig,
+  PdfImageElement,
+  PdfTextElement,
+  PdfShapeElement,
+  PdfRenderableElement,
+  PdfPageExport,
+  PdfExportRequest,
+} from "./export";
 export {
   applyBorderToImageElements,
   applyBorderToCanvasObjects,

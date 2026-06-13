@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useUIStore, useHistoryStore, useProjectStore, type Tool } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
 import {
@@ -11,6 +12,8 @@ import {
 } from "../canvas";
 import type { Rect } from "fabric";
 import { openProjectFromDialog, saveProjectAs } from "../projectFiles";
+import { createCalendarProject, createPhotoPageProject } from "../projectTemplates";
+import type { ProjectType } from "../types";
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
@@ -22,6 +25,15 @@ const TOOLS: { id: Tool; label: string; shortcut: string }[] = [
   { id: "shape", label: "Shape", shortcut: "S" },
   { id: "image", label: "Image", shortcut: "I" },
 ];
+
+function parseCalendarYear(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d{4}$/.test(trimmed)) return null;
+
+  const year = Number(trimmed);
+  if (!Number.isInteger(year) || year < 1900 || year > 9999) return null;
+  return year;
+}
 
 type PageSheetRect = Rect & { isPageSheet?: boolean };
 
@@ -87,6 +99,9 @@ export function Toolbar() {
 
   const currentProject = useProjectStore((s) => s.currentProject);
   const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
+  const [calendarDialogOpen, setCalendarDialogOpen] = useState(false);
+  const [calendarYearInput, setCalendarYearInput] = useState(String(new Date().getFullYear()));
+  const [calendarYearError, setCalendarYearError] = useState<string | null>(null);
 
   const currentPresetIndex = currentProject
     ? PAGE_PRESETS.findIndex(
@@ -128,6 +143,50 @@ export function Toolbar() {
     setSelectedTool(toolId);
   };
 
+  const createNewProject = (projectType: ProjectType, calendarYear?: number) => {
+    const project =
+      projectType === "calendar" ? createCalendarProject(calendarYear) : createPhotoPageProject();
+    const projectStore = useProjectStore.getState();
+    projectStore.setCurrentProject(project);
+    if (projectType === "calendar") {
+      projectStore.setActivePage(
+        project.pages.find((page) => page.role === "month" && page.calendar?.month === 1)?.id ??
+          null,
+      );
+      useUIStore.getState().setActivePanel("properties");
+      useUIStore.getState().clearSelection();
+    }
+    projectStore.setDirty(true);
+    useHistoryStore.getState().clear();
+  };
+
+  const handleNewProject = (projectType: ProjectType) => {
+    if (projectType === "calendar") {
+      setCalendarYearInput(String(new Date().getFullYear()));
+      setCalendarYearError(null);
+      setCalendarDialogOpen(true);
+      return;
+    }
+
+    createNewProject("photo-page");
+  };
+
+  const handleCreateCalendar = () => {
+    const year = parseCalendarYear(calendarYearInput);
+    if (year === null) {
+      setCalendarYearError("Enter a full four-digit year from 1900 to 9999.");
+      return;
+    }
+
+    createNewProject("calendar", year);
+    setCalendarDialogOpen(false);
+  };
+
+  const handleCancelCalendar = () => {
+    setCalendarDialogOpen(false);
+    setCalendarYearError(null);
+  };
+
   const handleSaveProject = () => {
     if (!currentProject) return;
     void saveProjectAs(currentProject)
@@ -160,127 +219,220 @@ export function Toolbar() {
   const zoomPercent = Math.round(zoom * 100);
 
   return (
-    <div
-      className="flex items-center gap-1 border-b border-neutral-700 bg-neutral-800 px-2 py-1"
-      data-testid="toolbar"
-    >
-      {/* Tool selection */}
-      <div className="flex items-center gap-0.5">
-        {TOOLS.map((tool) => (
+    <>
+      <div
+        className="flex items-center gap-1 border-b border-neutral-700 bg-neutral-800 px-2 py-1"
+        data-testid="toolbar"
+      >
+        {/* New project choices */}
+        <div className="flex items-center gap-0.5" aria-label="New project type">
           <button
-            key={tool.id}
-            onClick={() => handleToolClick(tool.id)}
-            className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              selectedTool === tool.id
-                ? "bg-blue-600 text-white"
-                : "text-neutral-300 hover:bg-neutral-700 hover:text-white"
-            }`}
-            title={`${tool.label} (${tool.shortcut})`}
-            data-testid={`tool-${tool.id}`}
+            onClick={() => handleNewProject("photo-page")}
+            className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="New Photo Page Project"
+            data-testid="new-photo-page-project"
           >
-            {tool.label}
+            New Photo Page
           </button>
-        ))}
-      </div>
+          <button
+            onClick={() => handleNewProject("calendar")}
+            className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="New Calendar Project"
+            data-testid="new-calendar-project"
+          >
+            New Calendar
+          </button>
+        </div>
 
-      {/* Page size picker */}
-      <div className="flex items-center gap-1">
-        <select
-          value={currentPresetIndex === -1 ? "" : currentPresetIndex}
-          onChange={handlePageSizeChange}
-          className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-200 outline-none hover:bg-neutral-600 focus:ring-1 focus:ring-blue-500"
-          title="Page Size"
-          data-testid="page-size-select"
-        >
-          {PAGE_PRESETS.map((preset, i) => (
-            <option key={preset.label} value={i}>
-              {preset.label} ({preset.widthMm}x{preset.heightMm}mm)
-            </option>
+        {/* Separator */}
+        <div className="mx-2 h-5 w-px bg-neutral-600" />
+
+        {/* Tool selection */}
+        <div className="flex items-center gap-0.5">
+          {TOOLS.map((tool) => (
+            <button
+              key={tool.id}
+              onClick={() => handleToolClick(tool.id)}
+              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                selectedTool === tool.id
+                  ? "bg-blue-600 text-white"
+                  : "text-neutral-300 hover:bg-neutral-700 hover:text-white"
+              }`}
+              title={`${tool.label} (${tool.shortcut})`}
+              data-testid={`tool-${tool.id}`}
+            >
+              {tool.label}
+            </button>
           ))}
-        </select>
+        </div>
+
+        {/* Page size picker */}
+        <div className="flex items-center gap-1">
+          <select
+            value={currentPresetIndex === -1 ? "" : currentPresetIndex}
+            onChange={handlePageSizeChange}
+            className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-200 outline-none hover:bg-neutral-600 focus:ring-1 focus:ring-blue-500"
+            title="Page Size"
+            data-testid="page-size-select"
+          >
+            {PAGE_PRESETS.map((preset, i) => (
+              <option key={preset.label} value={i}>
+                {preset.label} ({preset.widthMm}x{preset.heightMm}mm)
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Separator */}
+        <div className="mx-2 h-5 w-px bg-neutral-600" />
+
+        {/* Undo/Redo */}
+        <UndoRedoButtons />
+
+        {/* Separator */}
+        <div className="mx-2 h-5 w-px bg-neutral-600" />
+
+        {/* Zoom controls */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleZoomOut}
+            className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="Zoom Out"
+            data-testid="zoom-out"
+          >
+            -
+          </button>
+          <span
+            className="min-w-[3.5rem] text-center text-xs text-neutral-300"
+            data-testid="zoom-level"
+          >
+            {zoomPercent}%
+          </span>
+          <button
+            onClick={handleZoomIn}
+            className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="Zoom In"
+            data-testid="zoom-in"
+          >
+            +
+          </button>
+          <button
+            onClick={handleZoomReset}
+            className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="Reset Zoom (100%)"
+            data-testid="zoom-reset"
+          >
+            100%
+          </button>
+          <button
+            onClick={handleZoomFit}
+            className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+            title="Fit to Screen"
+            data-testid="zoom-fit"
+          >
+            Fit
+          </button>
+        </div>
+
+        {/* Separator */}
+        <div className="mx-2 h-5 w-px bg-neutral-600" />
+
+        {/* Save / Export */}
+        <button
+          onClick={handleOpenProject}
+          className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
+          title="Open Project"
+          data-testid="open-project"
+        >
+          Open Project
+        </button>
+        <button
+          onClick={handleSaveProject}
+          disabled={!currentProject}
+          className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          title="Save Project"
+          data-testid="save-project"
+        >
+          Save Project
+        </button>
+        <button
+          onClick={handleExportPdf}
+          className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
+          title="Export PDF (Ctrl+E)"
+          data-testid="export-pdf"
+        >
+          Export PDF
+        </button>
       </div>
 
-      {/* Separator */}
-      <div className="mx-2 h-5 w-px bg-neutral-600" />
-
-      {/* Undo/Redo */}
-      <UndoRedoButtons />
-
-      {/* Separator */}
-      <div className="mx-2 h-5 w-px bg-neutral-600" />
-
-      {/* Zoom controls */}
-      <div className="flex items-center gap-1">
-        <button
-          onClick={handleZoomOut}
-          className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-          title="Zoom Out"
-          data-testid="zoom-out"
+      {calendarDialogOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          role="presentation"
         >
-          -
-        </button>
-        <span
-          className="min-w-[3.5rem] text-center text-xs text-neutral-300"
-          data-testid="zoom-level"
-        >
-          {zoomPercent}%
-        </span>
-        <button
-          onClick={handleZoomIn}
-          className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-          title="Zoom In"
-          data-testid="zoom-in"
-        >
-          +
-        </button>
-        <button
-          onClick={handleZoomReset}
-          className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-          title="Reset Zoom (100%)"
-          data-testid="zoom-reset"
-        >
-          100%
-        </button>
-        <button
-          onClick={handleZoomFit}
-          className="rounded px-2 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-          title="Fit to Screen"
-          data-testid="zoom-fit"
-        >
-          Fit
-        </button>
-      </div>
-
-      {/* Separator */}
-      <div className="mx-2 h-5 w-px bg-neutral-600" />
-
-      {/* Save / Export */}
-      <button
-        onClick={handleOpenProject}
-        className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
-        title="Open Project"
-        data-testid="open-project"
-      >
-        Open Project
-      </button>
-      <button
-        onClick={handleSaveProject}
-        disabled={!currentProject}
-        className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-        title="Save Project"
-        data-testid="save-project"
-      >
-        Save Project
-      </button>
-      <button
-        onClick={handleExportPdf}
-        className="rounded px-2.5 py-1.5 text-xs font-medium text-neutral-300 hover:bg-neutral-700 hover:text-white"
-        title="Export PDF (Ctrl+E)"
-        data-testid="export-pdf"
-      >
-        Export PDF
-      </button>
-    </div>
+          <div
+            className="w-80 rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm text-neutral-200 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="calendar-create-title"
+            data-testid="calendar-create-dialog"
+          >
+            <h2 id="calendar-create-title" className="text-base font-semibold text-white">
+              Create Calendar
+            </h2>
+            <p className="mt-1 text-xs text-neutral-400">
+              Choose the year for a DIN A4 German calendar. January will open with photo layout
+              choices visible.
+            </p>
+            <label
+              className="mt-4 block text-xs font-medium text-neutral-300"
+              htmlFor="calendar-year-input"
+            >
+              Calendar year
+            </label>
+            <input
+              id="calendar-year-input"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]{4}"
+              value={calendarYearInput}
+              onChange={(event) => {
+                setCalendarYearInput(event.target.value);
+                setCalendarYearError(null);
+              }}
+              className="mt-1 w-full rounded border border-neutral-600 bg-neutral-800 px-3 py-2 text-white outline-none focus:border-blue-400"
+              data-testid="calendar-year-input"
+            />
+            {calendarYearError && (
+              <div
+                className="mt-2 rounded border border-red-500/50 bg-red-500/10 px-2 py-1 text-xs text-red-200"
+                data-testid="calendar-year-error"
+              >
+                {calendarYearError}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelCalendar}
+                className="rounded px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                data-testid="calendar-create-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCalendar}
+                className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
+                data-testid="calendar-create-confirm"
+              >
+                Create Calendar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

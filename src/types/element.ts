@@ -1,5 +1,8 @@
+import type { CalendarElementRole } from "./calendar";
+
 export type ElementType = "image" | "text" | "shape" | "group";
 export type ShapeKind = "rectangle" | "ellipse" | "line" | "polygon";
+export type TextAlign = "left" | "center" | "right" | "justify";
 
 export interface Position {
   x: number;
@@ -21,10 +24,13 @@ export interface BaseElement {
   zIndex: number;
   locked: boolean;
   visible: boolean;
+  role?: CalendarElementRole;
 }
 
 export interface ImageElement extends BaseElement {
   elementType: "image";
+  /** Stable project asset reference used when resolving packed .dsproj assets. */
+  assetId?: string;
   src: string;
   alt: string;
   borderStyle?: string;
@@ -38,6 +44,9 @@ export interface TextElement extends BaseElement {
   fontFamily: string;
   fontSize: number;
   color: string;
+  fontWeight?: string;
+  textAlign?: TextAlign;
+  letterSpacing?: number;
 }
 
 export interface ShapeElement extends BaseElement {

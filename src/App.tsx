@@ -16,9 +16,9 @@ function App() {
         <Toolbar />
 
         {/* Main content area */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Rulers + Canvas area */}
-          <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {/* Horizontal ruler row */}
             <div className="flex">
               <RulerCorner />
@@ -28,9 +28,9 @@ function App() {
             </div>
 
             {/* Vertical ruler + Canvas */}
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex min-h-0 flex-1 overflow-hidden">
               <Ruler orientation="vertical" />
-              <div className="flex-1 overflow-hidden">
+              <div className="min-h-0 flex-1 overflow-hidden">
                 <Canvas />
               </div>
             </div>

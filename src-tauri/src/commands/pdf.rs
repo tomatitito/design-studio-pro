@@ -47,6 +47,9 @@ mod tests {
                 background: Some("#ffffff".to_string()),
             }),
             images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output_path.clone(),
         };
@@ -75,6 +78,9 @@ mod tests {
                 border_color: None,
                 border_width: None,
             }],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: "/tmp/test.pdf".to_string(),
         };

@@ -1,6 +1,5 @@
-import { useEffect, useRef, useCallback, type DragEvent } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { Canvas as FabricCanvas } from "fabric";
-import { invoke } from "@tauri-apps/api/core";
 import { useUIStore, useProjectStore, getActiveProjectPage } from "../stores";
 import { useCanvasStore, useCanvasStoreApi } from "./CanvasContext";
 import {
@@ -10,43 +9,40 @@ import {
   attachUndoRedoShortcuts,
   attachKeyboardShortcuts,
   attachSmartGuides,
+  attachTextToolHandlers,
   createPageSheet,
   updatePageSheet,
   fitSheetInView,
   clampPanToSheet,
-  getDroppedImageFiles,
-  addImageToCanvas,
-  screenToCanvas,
   renderPageContent,
 } from "../canvas";
+import { useCanvasDropImport } from "./useCanvasDropImport";
 import type { Rect } from "fabric";
-import type { Project, Asset } from "../types";
+import { createPhotoPageProject } from "../projectTemplates";
 
 const CANVAS_DEFAULT_BG = "#1a1a1a";
 
-const DEFAULT_PROJECT: Project = {
-  id: "default",
-  name: "Untitled",
-  pages: [
-    {
-      id: "page-1",
-      name: "Page 1",
-      elements: [],
-      width: 210,
-      height: 297,
-      backgroundColor: "#ffffff",
-      order: 0,
-    },
-  ],
-  createdAt: new Date().toISOString(),
-  modifiedAt: new Date().toISOString(),
-  settings: {
-    width: 210,
-    height: 297,
-    orientation: "portrait",
-    unit: "mm",
-  },
-};
+function restoreCanvasSelection(canvas: FabricCanvas): void {
+  const record = canvas as unknown as { __pendingEditTextElementId?: string };
+  const pendingEditTextElementId = record.__pendingEditTextElementId;
+  const selectedElementId = pendingEditTextElementId ?? useUIStore.getState().selectedElementIds[0];
+  if (!selectedElementId) return;
+
+  const object = canvas
+    .getObjects()
+    .find((obj) => (obj as unknown as { elementId?: string }).elementId === selectedElementId);
+  if (!object) return;
+
+  canvas.setActiveObject(object);
+  useUIStore.getState().setSelectedElements([selectedElementId]);
+
+  if (pendingEditTextElementId === selectedElementId) {
+    const editable = object as unknown as { enterEditing?: () => void; selectAll?: () => void };
+    editable.enterEditing?.();
+    editable.selectAll?.();
+    delete record.__pendingEditTextElementId;
+  }
+}
 
 export function Canvas() {
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -62,6 +58,7 @@ export function Canvas() {
   const panOffset = useUIStore((s) => s.panOffset);
   const currentProject = useProjectStore((s) => s.currentProject);
   const activePageId = useProjectStore((s) => s.activePageId);
+  const { handleDragOver, handleDrop } = useCanvasDropImport(canvas, containerRef);
 
   const handleResize = useCallback((fabricCanvas: FabricCanvas) => {
     const container = containerRef.current;
@@ -120,13 +117,14 @@ export function Canvas() {
     const detachUndoRedoShortcuts = attachUndoRedoShortcuts();
     const detachKeyboardShortcuts = attachKeyboardShortcuts(fabricCanvas);
     const detachSmartGuides = attachSmartGuides(fabricCanvas);
+    const detachTextTool = attachTextToolHandlers(fabricCanvas);
     storeApi.getState().setCanvas(fabricCanvas);
 
     // Create default project if none exists and render page sheet
     let project = useProjectStore.getState().currentProject;
     if (!project) {
-      useProjectStore.getState().setCurrentProject(DEFAULT_PROJECT);
-      project = DEFAULT_PROJECT;
+      project = createPhotoPageProject();
+      useProjectStore.getState().setCurrentProject(project);
     }
     const activePage = getActiveProjectPage(project, useProjectStore.getState().activePageId);
     const width = activePage?.width ?? project.settings.width;
@@ -142,7 +140,11 @@ export function Canvas() {
       fabricCanvas,
       activePage,
       () => renderVersionRef.current === initialRenderVersion,
-    );
+    ).then(() => {
+      if (renderVersionRef.current === initialRenderVersion) {
+        restoreCanvasSelection(fabricCanvas);
+      }
+    });
     shouldAutoFitOnNextResizeRef.current = true;
 
     return () => {
@@ -152,6 +154,7 @@ export function Canvas() {
       detachUndoRedoShortcuts();
       detachKeyboardShortcuts();
       detachSmartGuides();
+      detachTextTool();
       renderVersionRef.current += 1;
       resizeObserver.disconnect();
       storeApi.getState().setCanvas(null);
@@ -201,43 +204,12 @@ export function Canvas() {
 
     const renderVersion = renderVersionRef.current + 1;
     renderVersionRef.current = renderVersion;
-    void renderPageContent(canvas, activePage, () => renderVersionRef.current === renderVersion);
-  }, [canvas, currentProject, activePageId]);
-
-  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      if (!canvas) return;
-
-      const imageFiles = getDroppedImageFiles(e.nativeEvent);
-      if (imageFiles.length === 0) return;
-
-      // Convert drop position from screen to canvas coordinates
-      const containerRect = containerRef.current?.getBoundingClientRect();
-      const currentZoom = useUIStore.getState().zoom;
-      const currentPanOffset = useUIStore.getState().panOffset;
-      const dropScreenPos = {
-        x: e.clientX - (containerRect?.left ?? 0),
-        y: e.clientY - (containerRect?.top ?? 0),
-      };
-      const dropCanvasPos = screenToCanvas(dropScreenPos, currentZoom, currentPanOffset);
-
-      for (const file of imageFiles) {
-        const asset = await invoke<Asset>("import_asset", {
-          name: file.name,
-          filePath: file.name,
-          projectDir: null,
-        });
-        await addImageToCanvas(canvas, asset, dropCanvasPos);
+    void renderPageContent(canvas, activePage, () => renderVersionRef.current === renderVersion).then(() => {
+      if (renderVersionRef.current === renderVersion) {
+        restoreCanvasSelection(canvas);
       }
-    },
-    [canvas],
-  );
+    });
+  }, [canvas, currentProject, activePageId]);
 
   return (
     <div

@@ -3,11 +3,20 @@ import { save } from "@tauri-apps/plugin-dialog";
 import type { Canvas as FabricCanvas, FabricObject } from "fabric";
 import { FabricImage } from "fabric";
 import { pxToMm } from "./sheet";
-import { getElementId } from "./handlers";
+import { getFabricDocumentElementId, getFabricImageSourcePath } from "./documentAdapter";
 import { resolveImageBorderStyle, type ImageBorderStyleId } from "./imageBorders";
 import { getActiveProjectPage, useProjectStore } from "../stores";
-import type { ImageElement, Page, Project } from "../types";
+import type {
+  ImageElement,
+  Page,
+  Project,
+  ShapeElement,
+  ShapeKind,
+  TextAlign,
+  TextElement,
+} from "../types";
 import { normalizeProjectElementCoordinates } from "../projectCoordinates";
+import { getTextAlign, getTextFontWeight, getTextLetterSpacing } from "../textStyles";
 
 /** Configuration for a PDF page. */
 export interface PdfPageConfig {
@@ -30,14 +39,53 @@ export interface PdfImageElement {
 }
 
 /** Request structure for PDF export. */
+export interface PdfTextElement {
+  content: string;
+  xMm: number;
+  yMm: number;
+  widthMm: number;
+  heightMm: number;
+  rotationDeg: number;
+  fontFamily: string;
+  fontSize: number;
+  color: string;
+  fontWeight: string;
+  textAlign: TextAlign;
+  letterSpacing: number;
+}
+
+export interface PdfShapeElement {
+  shapeKind: ShapeKind;
+  xMm: number;
+  yMm: number;
+  widthMm: number;
+  heightMm: number;
+  rotationDeg: number;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  opacity: number;
+}
+
+export type PdfRenderableElement =
+  | ({ elementType: "image" } & PdfImageElement)
+  | ({ elementType: "text" } & PdfTextElement)
+  | ({ elementType: "shape" } & PdfShapeElement);
+
 export interface PdfPageExport {
   page: PdfPageConfig;
   images: PdfImageElement[];
+  texts: PdfTextElement[];
+  shapes: PdfShapeElement[];
+  elements: PdfRenderableElement[];
 }
 
 export interface PdfExportRequest {
   page?: PdfPageConfig;
   images?: PdfImageElement[];
+  texts?: PdfTextElement[];
+  shapes?: PdfShapeElement[];
+  elements?: PdfRenderableElement[];
   pages?: PdfPageExport[];
   outputPath: string;
 }
@@ -95,15 +143,14 @@ export function collectExportData(
     // Only export FabricImage instances
     if (!(obj instanceof FabricImage)) continue;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const originalPath = (obj as any).originalFilePath as string | undefined;
-    if (!originalPath) continue;
+    const originalPath = getFabricImageSourcePath(obj as FabricObject);
+    if (!isExportableImageSource(originalPath)) continue;
 
     const widthPx = (obj.width ?? 0) * (obj.scaleX ?? 1);
     const heightPx = (obj.height ?? 0) * (obj.scaleY ?? 1);
     const left = getObjectLeftEdge(obj as FabricObject) - sheetLeftEdge;
     const top = getObjectTopEdge(obj as FabricObject) - sheetTopEdge;
-    const elementId = getElementId(obj as FabricObject);
+    const elementId = getFabricDocumentElementId(obj as FabricObject);
     const border = resolvePdfImageBorder(imageElementsById.get(elementId));
 
     images.push({
@@ -117,26 +164,120 @@ export function collectExportData(
     });
   }
 
+  const texts = collectTextElements(currentPage);
+
+  const shapes = collectShapeElements(currentPage);
+  const elements = collectRenderableElements(currentPage, images);
+
   return {
     page: { widthMm: pageWidthMm, heightMm: pageHeightMm, background },
     images,
+    texts,
+    shapes,
+    elements,
   };
+}
+
+function mapTextElement(element: TextElement): PdfTextElement {
+  return {
+    content: element.content,
+    xMm: pxToMm(element.position.x),
+    yMm: pxToMm(element.position.y),
+    widthMm: pxToMm(element.size.width),
+    heightMm: pxToMm(element.size.height),
+    rotationDeg: element.rotation,
+    fontFamily: element.fontFamily,
+    fontSize: element.fontSize,
+    color: element.color,
+    fontWeight: getTextFontWeight(element),
+    textAlign: getTextAlign(element),
+    letterSpacing: getTextLetterSpacing(element),
+  };
+}
+
+function collectTextElements(page: Page | null | undefined): PdfTextElement[] {
+  return (page?.elements ?? [])
+    .filter((element): element is TextElement => element.elementType === "text" && element.visible)
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .map(mapTextElement);
+}
+
+function mapShapeElement(element: ShapeElement): PdfShapeElement {
+  return {
+    shapeKind: element.shapeKind,
+    xMm: pxToMm(element.position.x),
+    yMm: pxToMm(element.position.y),
+    widthMm: pxToMm(element.size.width),
+    heightMm: pxToMm(element.size.height),
+    rotationDeg: element.rotation,
+    fill: element.fill,
+    stroke: element.stroke,
+    strokeWidth: pxToMm(element.strokeWidth),
+    opacity: element.opacity,
+  };
+}
+
+function collectShapeElements(page: Page | null | undefined): PdfShapeElement[] {
+  return (page?.elements ?? [])
+    .filter(
+      (element): element is ShapeElement => element.elementType === "shape" && element.visible,
+    )
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .map(mapShapeElement);
+}
+
+function isExportableImageSource(src: string | undefined): src is string {
+  return typeof src === "string" && src.trim().length > 0;
+}
+
+function mapImageElement(element: ImageElement): PdfImageElement {
+  return {
+    imagePath: element.src,
+    xMm: pxToMm(element.position.x),
+    yMm: pxToMm(element.position.y),
+    widthMm: pxToMm(element.size.width),
+    heightMm: pxToMm(element.size.height),
+    rotationDeg: element.rotation,
+    ...resolvePdfImageBorder(element),
+  };
+}
+
+function collectRenderableElements(
+  page: Page | null | undefined,
+  canvasImages?: PdfImageElement[],
+): PdfRenderableElement[] {
+  let canvasImageIndex = 0;
+  return (page?.elements ?? [])
+    .filter((element) => element.visible)
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .flatMap((element): PdfRenderableElement[] => {
+      if (element.elementType === "image") {
+        if (!isExportableImageSource(element.src)) return [];
+        const image = canvasImages?.[canvasImageIndex++] ?? mapImageElement(element);
+        return [{ elementType: "image", ...image }];
+      }
+      if (element.elementType === "text") {
+        return [{ elementType: "text", ...mapTextElement(element) }];
+      }
+      if (element.elementType === "shape") {
+        return [{ elementType: "shape", ...mapShapeElement(element) }];
+      }
+      return [];
+    });
 }
 
 function collectPageExportData(page: Page, project: Project): PdfPageExport {
   const unit = project.settings.unit;
   const images = page.elements
-    .filter((element): element is ImageElement => element.elementType === "image" && element.visible)
+    .filter(
+      (element): element is ImageElement =>
+        element.elementType === "image" && element.visible && isExportableImageSource(element.src),
+    )
     .sort((a, b) => a.zIndex - b.zIndex)
-    .map((element) => ({
-      imagePath: element.src,
-      xMm: pxToMm(element.position.x),
-      yMm: pxToMm(element.position.y),
-      widthMm: pxToMm(element.size.width),
-      heightMm: pxToMm(element.size.height),
-      rotationDeg: element.rotation,
-      ...resolvePdfImageBorder(element),
-    }));
+    .map(mapImageElement);
+
+  const texts = collectTextElements(page);
+  const shapes = collectShapeElements(page);
 
   return {
     page: {
@@ -145,6 +286,9 @@ function collectPageExportData(page: Page, project: Project): PdfPageExport {
       background: page.backgroundColor,
     },
     images,
+    texts,
+    shapes,
+    elements: collectRenderableElements(page),
   };
 }
 
@@ -189,15 +333,19 @@ export function resolvePdfImageBorder(
     return {
       borderStyle: resolved.styleId,
       borderColor: resolved.borderColor,
-      borderWidth: resolved.borderWidth,
+      borderWidth: pxToMm(resolved.borderWidth),
     };
   }
 
   return {
     borderStyle: imageElement.borderStyle,
     borderColor: imageElement.borderColor,
-    borderWidth: imageElement.borderWidth,
+    borderWidth: toOptionalMm(imageElement.borderWidth),
   };
+}
+
+function toOptionalMm(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? pxToMm(value) : undefined;
 }
 
 const INCH_TO_MM = 25.4;

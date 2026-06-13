@@ -1,11 +1,12 @@
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use design_studio_pro_lib::core::pdf::{
-    self, PdfExportRequest, PdfImageElement, PdfPageConfig, PdfPageExport,
+    self, PdfExportRequest, PdfImageElement, PdfPageConfig, PdfPageExport, PdfRenderableElement,
+    PdfShapeElement, PdfTextElement,
 };
 use design_studio_pro_lib::core::project_io;
 use design_studio_pro_lib::models::{
     Asset, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page, Position, Project,
-    ProjectSettings, Size,
+    ProjectSettings, ProjectType, Size,
 };
 use design_studio_pro_lib::updater::{self, AutomaticUpdateOutcome, CheckOutcome, InstallOutcome};
 use std::collections::HashSet;
@@ -258,6 +259,17 @@ enum BorderStylePreset {
     WalnutFrame,
 }
 
+const DISPLAY_DPI: f64 = 72.0;
+const MM_PER_INCH: f64 = 25.4;
+
+fn display_px_to_mm(px: f64) -> f64 {
+    px * MM_PER_INCH / DISPLAY_DPI
+}
+
+fn mm_to_display_px(mm: f64) -> f64 {
+    mm * DISPLAY_DPI / MM_PER_INCH
+}
+
 fn resolve_background_spec(input: &str) -> String {
     BACKGROUND_PRESETS
         .iter()
@@ -397,14 +409,73 @@ fn build_pdf_image_from_project_element(
     {
         Some(PdfImageElement {
             image_path: resolved_path,
-            x_mm: el.position.x,
-            y_mm: el.position.y,
-            width_mm: el.size.width,
-            height_mm: el.size.height,
+            x_mm: display_px_to_mm(el.position.x),
+            y_mm: display_px_to_mm(el.position.y),
+            width_mm: display_px_to_mm(el.size.width),
+            height_mm: display_px_to_mm(el.size.height),
             rotation_deg: el.rotation,
             border_style: border_style.clone(),
             border_color: border_color.clone(),
-            border_width: *border_width,
+            border_width: border_width.map(display_px_to_mm),
+        })
+    } else {
+        None
+    }
+}
+
+fn is_project_element_pdf_visible(el: &Element) -> bool {
+    el.visible && el.opacity.is_finite() && el.opacity > 0.0
+}
+
+fn build_pdf_text_from_project_element(el: &Element) -> Option<PdfTextElement> {
+    if let ElementType::Text {
+        content,
+        font_family,
+        font_size,
+        color,
+        font_weight,
+        text_align,
+        letter_spacing,
+    } = &el.element_type
+    {
+        Some(PdfTextElement {
+            content: content.clone(),
+            x_mm: display_px_to_mm(el.position.x),
+            y_mm: display_px_to_mm(el.position.y),
+            width_mm: display_px_to_mm(el.size.width),
+            height_mm: display_px_to_mm(el.size.height),
+            rotation_deg: el.rotation,
+            font_family: font_family.clone(),
+            font_size: *font_size,
+            color: color.clone(),
+            font_weight: font_weight.clone(),
+            text_align: text_align.clone(),
+            letter_spacing: *letter_spacing,
+        })
+    } else {
+        None
+    }
+}
+
+fn build_pdf_shape_from_project_element(el: &Element) -> Option<PdfShapeElement> {
+    if let ElementType::Shape {
+        shape_kind,
+        fill,
+        stroke,
+        stroke_width,
+    } = &el.element_type
+    {
+        Some(PdfShapeElement {
+            shape_kind: format!("{:?}", shape_kind).to_ascii_lowercase(),
+            x_mm: display_px_to_mm(el.position.x),
+            y_mm: display_px_to_mm(el.position.y),
+            width_mm: display_px_to_mm(el.size.width),
+            height_mm: display_px_to_mm(el.size.height),
+            rotation_deg: el.rotation,
+            fill: fill.clone(),
+            stroke: stroke.clone(),
+            stroke_width: display_px_to_mm(*stroke_width),
+            opacity: el.opacity,
         })
     } else {
         None
@@ -416,6 +487,7 @@ fn build_element(index: usize, image_path: &str, pos: (f64, f64), size: (f64, f6
     Element {
         id: format!("elem-{}", uuid::Uuid::new_v4()),
         element_type: ElementType::Image {
+            asset_id: None,
             src: image_path.to_string(),
             alt: Path::new(image_path)
                 .file_name()
@@ -426,10 +498,14 @@ fn build_element(index: usize, image_path: &str, pos: (f64, f64), size: (f64, f6
             border_color: None,
             border_width: None,
         },
-        position: Position { x: pos.0, y: pos.1 },
+        role: None,
+        position: Position {
+            x: mm_to_display_px(pos.0),
+            y: mm_to_display_px(pos.1),
+        },
         size: Size {
-            width: size.0,
-            height: size.1,
+            width: mm_to_display_px(size.0),
+            height: mm_to_display_px(size.1),
         },
         rotation: 0.0,
         opacity: 1.0,
@@ -546,6 +622,8 @@ fn build_new_page(
     Ok(Page {
         id: format!("page-{}", uuid::Uuid::new_v4()),
         name: page_name.unwrap_or_else(|| format!("Page {}", ordered_page_count + 1)),
+        role: None,
+        calendar: None,
         elements: vec![],
         width,
         height,
@@ -685,7 +763,7 @@ fn apply_border_to_images(
         {
             *border_style = Some(style.style.clone());
             *border_color = Some(style.color.clone());
-            *border_width = Some(style.width);
+            *border_width = Some(mm_to_display_px(style.width));
         }
     }
 
@@ -750,9 +828,13 @@ fn cmd_new(
     let project = Project {
         id: format!("proj-{}", uuid::Uuid::new_v4()),
         name,
+        project_type: ProjectType::PhotoPage,
+        calendar: None,
         pages: vec![Page {
             id: format!("page-{}", uuid::Uuid::new_v4()),
             name: "Page 1".to_string(),
+            role: None,
+            calendar: None,
             elements,
             width: page_w,
             height: page_h,
@@ -886,6 +968,9 @@ fn cmd_export_pdf(
                     .iter()
                     .filter_map(|el| {
                         if let ElementType::Image { ref src, .. } = el.element_type {
+                            if !is_project_element_pdf_visible(el) || src.trim().is_empty() {
+                                return None;
+                            }
                             // Resolve image path: check extracted assets first, then original
                             let resolved_path = loaded
                                 .manifest
@@ -904,6 +989,48 @@ fn cmd_export_pdf(
                     })
                     .collect();
 
+                let pdf_texts = page
+                    .elements
+                    .iter()
+                    .filter(|el| is_project_element_pdf_visible(el))
+                    .filter_map(build_pdf_text_from_project_element)
+                    .collect();
+                let pdf_shapes: Vec<PdfShapeElement> = page
+                    .elements
+                    .iter()
+                    .filter(|el| is_project_element_pdf_visible(el))
+                    .filter_map(build_pdf_shape_from_project_element)
+                    .collect();
+
+                let mut ordered_elements = page.elements.clone();
+                ordered_elements.sort_by_key(|el| el.z_index);
+                let pdf_elements = ordered_elements
+                    .iter()
+                    .filter(|el| is_project_element_pdf_visible(el))
+                    .filter_map(|el| match &el.element_type {
+                        ElementType::Image { src, .. } if !src.trim().is_empty() => {
+                            let resolved_path = loaded
+                                .manifest
+                                .assets
+                                .iter()
+                                .find(|a| {
+                                    Path::new(&a.file_path).file_name().and_then(|n| n.to_str())
+                                        == Path::new(src).file_name().and_then(|n| n.to_str())
+                                })
+                                .map(|a| a.file_path.clone())
+                                .unwrap_or_else(|| src.clone());
+                            build_pdf_image_from_project_element(resolved_path, el)
+                                .map(PdfRenderableElement::Image)
+                        }
+                        ElementType::Text { .. } => {
+                            build_pdf_text_from_project_element(el).map(PdfRenderableElement::Text)
+                        }
+                        ElementType::Shape { .. } => build_pdf_shape_from_project_element(el)
+                            .map(PdfRenderableElement::Shape),
+                        _ => None,
+                    })
+                    .collect();
+
                 PdfPageExport {
                     page: PdfPageConfig {
                         width_mm: page.width,
@@ -911,6 +1038,9 @@ fn cmd_export_pdf(
                         background: Some(page.background_color.clone()),
                     },
                     images: pdf_images,
+                    texts: pdf_texts,
+                    shapes: pdf_shapes,
+                    elements: pdf_elements,
                 }
             })
             .collect();
@@ -918,6 +1048,9 @@ fn cmd_export_pdf(
         let request = PdfExportRequest {
             page: None,
             images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages,
             output_path: output.clone(),
         };
@@ -950,6 +1083,9 @@ fn cmd_export_pdf(
                 background: Some(background),
             }),
             images: pdf_images,
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
             pages: vec![],
             output_path: output.clone(),
         };
@@ -1082,9 +1218,13 @@ mod tests {
         Project {
             id: "proj-test".to_string(),
             name: "Test Project".to_string(),
+            project_type: ProjectType::PhotoPage,
+            calendar: None,
             pages: vec![Page {
                 id: "page-1".to_string(),
                 name: "Page 1".to_string(),
+                role: None,
+                calendar: None,
                 elements: vec![],
                 width: 210.0,
                 height: 297.0,
@@ -1106,12 +1246,14 @@ mod tests {
         Element {
             id: id.to_string(),
             element_type: ElementType::Image {
+                asset_id: None,
                 src: format!("/tmp/{}.png", id),
                 alt: id.to_string(),
                 border_style: None,
                 border_color: None,
                 border_width: None,
             },
+            role: None,
             position: Position { x: 0.0, y: 0.0 },
             size: Size {
                 width: 50.0,
@@ -1154,7 +1296,7 @@ mod tests {
             } => {
                 assert_eq!(border_style.as_deref(), Some("custom"));
                 assert_eq!(border_color.as_deref(), Some("#ff0000"));
-                assert_eq!(*border_width, Some(2.0));
+                assert!((border_width.unwrap() - mm_to_display_px(2.0)).abs() < 1e-10);
             }
             _ => panic!("expected image"),
         }
@@ -1197,7 +1339,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(border_color.as_deref(), Some("#00ff00"));
-                    assert_eq!(*border_width, Some(4.0));
+                    assert!((border_width.unwrap() - mm_to_display_px(4.0)).abs() < 1e-10);
                 }
                 _ => panic!("expected image"),
             }
@@ -1230,7 +1372,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(border_color.as_deref(), Some("#0000ff"));
-                    assert_eq!(*border_width, Some(1.5));
+                    assert!((border_width.unwrap() - mm_to_display_px(1.5)).abs() < 1e-10);
                 }
                 _ => panic!("expected image"),
             }
@@ -1251,12 +1393,14 @@ mod tests {
         let el = Element {
             id: "image-1".to_string(),
             element_type: ElementType::Image {
+                asset_id: None,
                 src: "/tmp/image-1.png".to_string(),
                 alt: "image-1".to_string(),
                 border_style: Some("ornate-gold".to_string()),
                 border_color: Some("#d4af37".to_string()),
                 border_width: Some(8.0),
             },
+            role: None,
             position: Position { x: 12.0, y: 34.0 },
             size: Size {
                 width: 56.0,
@@ -1274,7 +1418,184 @@ mod tests {
 
         assert_eq!(mapped.border_style.as_deref(), Some("ornate-gold"));
         assert_eq!(mapped.border_color.as_deref(), Some("#d4af37"));
-        assert_eq!(mapped.border_width, Some(8.0));
+        assert!((mapped.x_mm - display_px_to_mm(12.0)).abs() < 1e-10);
+        assert!((mapped.y_mm - display_px_to_mm(34.0)).abs() < 1e-10);
+        assert!((mapped.width_mm - display_px_to_mm(56.0)).abs() < 1e-10);
+        assert!((mapped.height_mm - display_px_to_mm(78.0)).abs() < 1e-10);
+        assert!((mapped.border_width.unwrap() - display_px_to_mm(8.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn build_element_converts_cli_mm_inputs_to_display_pixels_for_project_storage() {
+        let el = build_element(0, "/tmp/image.png", (25.4, 12.7), (50.8, 25.4));
+
+        assert!((el.position.x - 72.0).abs() < 1e-10);
+        assert!((el.position.y - 36.0).abs() < 1e-10);
+        assert!((el.size.width - 144.0).abs() < 1e-10);
+        assert!((el.size.height - 72.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn cli_new_project_image_mm_inputs_round_trip_through_pdf_mapper_once() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let image_path = temp_dir.path().join("photo.png");
+        let project_path = temp_dir.path().join("project.dsproj");
+        let extract_dir = temp_dir.path().join("extract");
+        std::fs::create_dir_all(&extract_dir).expect("extract dir");
+
+        let image = image::ImageBuffer::from_pixel(144, 72, image::Rgba([255u8, 0, 0, 255]));
+        image.save(&image_path).expect("save test image");
+
+        cmd_new(
+            "CLI Round Trip".to_string(),
+            "a4".to_string(),
+            "portrait".to_string(),
+            vec![image_path.to_string_lossy().to_string()],
+            vec!["25.4,12.7".to_string()],
+            vec![],
+            project_path.to_string_lossy().to_string(),
+            "#ffffff".to_string(),
+            None,
+            Some("#112233".to_string()),
+            Some(2.0),
+            vec![],
+            false,
+        )
+        .expect("create project");
+
+        let loaded = project_io::load_project(
+            project_path.to_str().expect("project path"),
+            extract_dir.to_str().expect("extract path"),
+        )
+        .expect("load project");
+        let element = &loaded.manifest.project.pages[0].elements[0];
+
+        assert!((element.position.x - 72.0).abs() < 1e-10);
+        assert!((element.position.y - 36.0).abs() < 1e-10);
+        assert!((element.size.width - 144.0).abs() < 1e-10);
+        assert!((element.size.height - 72.0).abs() < 1e-10);
+        match &element.element_type {
+            ElementType::Image {
+                border_color,
+                border_width,
+                ..
+            } => {
+                assert_eq!(border_color.as_deref(), Some("#112233"));
+                assert!((border_width.unwrap() - mm_to_display_px(2.0)).abs() < 1e-10);
+            }
+            _ => panic!("expected image"),
+        }
+
+        let mapped = build_pdf_image_from_project_element(
+            image_path.to_string_lossy().to_string(),
+            element,
+        )
+        .expect("pdf image");
+
+        assert!((mapped.x_mm - 25.4).abs() < 1e-10);
+        assert!((mapped.y_mm - 12.7).abs() < 1e-10);
+        assert!((mapped.width_mm - 50.8).abs() < 1e-10);
+        assert!((mapped.height_mm - 25.4).abs() < 1e-10);
+        assert!((mapped.border_width.unwrap() - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn build_pdf_image_from_project_element_converts_display_pixels_to_mm_for_alignment() {
+        let el = Element {
+            id: "image-align".to_string(),
+            element_type: ElementType::Image {
+                asset_id: None,
+                src: "/tmp/image-align.png".to_string(),
+                alt: "image-align".to_string(),
+                border_style: None,
+                border_color: None,
+                border_width: None,
+            },
+            role: None,
+            position: Position { x: 72.0, y: 36.0 },
+            size: Size {
+                width: 144.0,
+                height: 72.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        };
+
+        let mapped = build_pdf_image_from_project_element("/tmp/extracted.png".to_string(), &el)
+            .expect("expected pdf image");
+
+        assert!((mapped.x_mm - 25.4).abs() < 1e-10);
+        assert!((mapped.y_mm - 12.7).abs() < 1e-10);
+        assert!((mapped.width_mm - 50.8).abs() < 1e-10);
+        assert!((mapped.height_mm - 25.4).abs() < 1e-10);
+    }
+
+    #[test]
+    fn pdf_project_element_visibility_filters_hidden_and_transparent_fallbacks() {
+        let mut el = Element {
+            id: "shape-hidden".to_string(),
+            element_type: ElementType::Shape {
+                shape_kind: design_studio_pro_lib::models::ShapeKind::Rectangle,
+                fill: "#ffffff".to_string(),
+                stroke: "#000000".to_string(),
+                stroke_width: 1.0,
+            },
+            role: None,
+            position: Position { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 72.0,
+                height: 72.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: false,
+        };
+
+        assert!(!is_project_element_pdf_visible(&el));
+        el.visible = true;
+        el.opacity = 0.0;
+        assert!(!is_project_element_pdf_visible(&el));
+        el.opacity = 1.0;
+        assert!(is_project_element_pdf_visible(&el));
+    }
+
+    #[test]
+    fn build_pdf_text_from_project_element_converts_display_pixels_to_mm() {
+        let el = Element {
+            id: "text-1".to_string(),
+            element_type: ElementType::Text {
+                content: "Calendar title".to_string(),
+                font_family: "Arial".to_string(),
+                font_size: 24.0,
+                color: "#111111".to_string(),
+                font_weight: Some("700".to_string()),
+                text_align: Some("center".to_string()),
+                letter_spacing: Some(0.2),
+            },
+            role: None,
+            position: Position { x: 72.0, y: 36.0 },
+            size: Size {
+                width: 144.0,
+                height: 18.0,
+            },
+            rotation: 0.0,
+            opacity: 1.0,
+            z_index: 0,
+            locked: false,
+            visible: true,
+        };
+
+        let mapped = build_pdf_text_from_project_element(&el).expect("expected pdf text");
+
+        assert!((mapped.x_mm - 25.4).abs() < 1e-10);
+        assert!((mapped.y_mm - 12.7).abs() < 1e-10);
+        assert!((mapped.width_mm - 50.8).abs() < 1e-10);
+        assert!((mapped.height_mm - 6.35).abs() < 1e-10);
     }
 
     #[test]

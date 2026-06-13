@@ -2,6 +2,7 @@ import type { Canvas as FabricCanvas, FabricObject, ModifiedEvent } from "fabric
 import type { TEvent } from "fabric";
 import { useUIStore } from "../stores";
 import { getActiveProjectPage, useProjectStore } from "../stores";
+import type { Element } from "../types";
 
 /**
  * We store our application element ID on Fabric objects using this key.
@@ -56,7 +57,10 @@ function getPageSheetOriginFromCanvasObject(target: FabricObject): { left: numbe
   return { left: sheet?.left ?? 0, top: sheet?.top ?? 0 };
 }
 
-function persistObjectPosition(target: FabricObject): boolean {
+function updateElementFromFabricObject(
+  target: FabricObject,
+  updater: (element: Element) => Element,
+): boolean {
   const id = getElementId(target);
   if (!id) return false;
 
@@ -67,10 +71,16 @@ function persistObjectPosition(target: FabricObject): boolean {
   const elementIndex = page.elements.findIndex((el) => el.id === id);
   if (elementIndex === -1) return false;
 
-  const origin = getPageSheetOriginFromCanvasObject(target);
   const updatedElements = [...page.elements];
-  updatedElements[elementIndex] = {
-    ...updatedElements[elementIndex],
+  updatedElements[elementIndex] = updater(updatedElements[elementIndex]);
+  projectStore.updatePage(page.id, { elements: updatedElements });
+  return true;
+}
+
+function persistObjectPosition(target: FabricObject): boolean {
+  const origin = getPageSheetOriginFromCanvasObject(target);
+  return updateElementFromFabricObject(target, (element) => ({
+    ...element,
     position: {
       x: (target.left ?? 0) - origin.left,
       y: (target.top ?? 0) - origin.top,
@@ -80,10 +90,24 @@ function persistObjectPosition(target: FabricObject): boolean {
       height: (target.height ?? 0) * (target.scaleY ?? 1),
     },
     rotation: target.angle ?? 0,
-  };
+  }));
+}
 
-  projectStore.updatePage(page.id, { elements: updatedElements });
-  return true;
+function persistTextContent(target: FabricObject): boolean {
+  const text = (target as unknown as { text?: unknown }).text;
+  if (typeof text !== "string") return false;
+
+  return updateElementFromFabricObject(target, (element) => {
+    if (element.elementType !== "text") return element;
+    return {
+      ...element,
+      content: text,
+      size: {
+        width: (target.width ?? 0) * (target.scaleX ?? 1),
+        height: (target.height ?? 0) * (target.scaleY ?? 1),
+      },
+    };
+  });
 }
 
 function bringSelectedImagesToFront(
@@ -191,8 +215,17 @@ export function attachCanvasHandlers(canvas: FabricCanvas): () => void {
   canvas.on("selection:created", handleSelectionCreated);
   canvas.on("selection:updated", handleSelectionUpdated);
   canvas.on("selection:cleared", handleSelectionCleared);
+  const handleTextChanged = (e: Partial<TEvent> & { target?: FabricObject }) => {
+    const target = e.target;
+    if (!target) return;
+    if (persistTextContent(target)) {
+      useProjectStore.getState().setDirty(true);
+    }
+  };
+
   canvas.on("object:moving", handleObjectMoving);
   canvas.on("object:modified", handleObjectModified);
+  canvas.on("text:changed", handleTextChanged);
 
   return () => {
     canvas.off("selection:created", handleSelectionCreated);
@@ -200,5 +233,6 @@ export function attachCanvasHandlers(canvas: FabricCanvas): () => void {
     canvas.off("selection:cleared", handleSelectionCleared);
     canvas.off("object:moving", handleObjectMoving);
     canvas.off("object:modified", handleObjectModified);
+    canvas.off("text:changed", handleTextChanged);
   };
 }
