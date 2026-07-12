@@ -1,6 +1,6 @@
 import { Textbox } from "fabric";
 import type { Canvas as FabricCanvas, FabricObject, TEvent } from "fabric";
-import { getActiveProjectPage, useProjectStore, useUIStore } from "../stores";
+import { getActiveEditingUnit, useProjectStore, useUIStore } from "../stores";
 import type { Position, TextElement } from "../types";
 import { CALENDAR_FONT_OPTIONS } from "../textStyles";
 import { setElementId } from "./handlers";
@@ -62,8 +62,9 @@ function clamp(value: number, min: number, max: number): number {
 
 function createDefaultTextElement(start: Position, end: Position | null, pageDisplaySize: { width: number; height: number }): TextElement | null {
   const projectStore = useProjectStore.getState();
-  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
-  if (!page) return null;
+  const activeUnit = getActiveEditingUnit(projectStore.currentProject, projectStore.activePageId);
+  const sourceElements = activeUnit?.spread?.elements ?? activeUnit?.page?.elements;
+  if (!sourceElements) return null;
 
   const rawWidth = end ? Math.abs(end.x - start.x) : DEFAULT_TEXT_WIDTH;
   const rawHeight = end ? Math.abs(end.y - start.y) : DEFAULT_TEXT_HEIGHT;
@@ -75,7 +76,7 @@ function createDefaultTextElement(start: Position, end: Position | null, pageDis
     x: clamp(x, 0, Math.max(0, pageDisplaySize.width - MIN_DRAG_SIZE)),
     y: clamp(y, 0, Math.max(0, pageDisplaySize.height - MIN_DRAG_SIZE)),
   };
-  const maxZ = page.elements.reduce((current, element) => Math.max(current, element.zIndex), -1);
+  const maxZ = sourceElements.reduce((current, element) => Math.max(current, element.zIndex), -1);
 
   return {
     id: createId(),
@@ -102,10 +103,11 @@ function createDefaultTextElement(start: Position, end: Position | null, pageDis
 
 function addTextElementToProject(element: TextElement): void {
   const projectStore = useProjectStore.getState();
-  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
-  if (!page) return;
+  const activeUnit = getActiveEditingUnit(projectStore.currentProject, projectStore.activePageId);
+  const sourceElements = activeUnit?.spread?.elements ?? activeUnit?.page?.elements;
+  if (!sourceElements) return;
 
-  projectStore.updatePage(page.id, { elements: [...page.elements, element] });
+  projectStore.updateActiveElements([...sourceElements, element]);
   projectStore.setDirty(true);
 }
 

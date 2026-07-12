@@ -1095,6 +1095,180 @@ describe("Canvas", () => {
     expect(addedText?.size.height).toBeCloseTo(end.y - start.y);
   });
 
+  it("renders spread as combined sheet with shared cross-boundary content", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "left-page", backgroundColor: "#ffffff", order: 0 },
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "right-page", backgroundColor: "#22304a", order: 1 },
+      ],
+      units: [{ id: "unit-spread-1", unitType: "spread", spreadId: "spread-1" }],
+      spreads: [
+        {
+          id: "spread-1",
+          name: "Spread 1",
+          leftPageId: "left-page",
+          rightPageId: "right-page",
+          elements: [
+            {
+              id: "cross-boundary-shape",
+              elementType: "shape",
+              shapeKind: "rectangle",
+              fill: "#ff0000",
+              stroke: "#000000",
+              strokeWidth: 0,
+              position: { x: mmToPx(210) - 20, y: 40 },
+              size: { width: 60, height: 30 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "left-page" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "cross-boundary-shape")).toBe(true);
+    });
+
+    expect(sheet.width).toBeCloseTo(mmToPx(420));
+    expect(sheet.height).toBeCloseTo(mmToPx(297));
+    expect(fabricMock.rectInstances.some((rect) => (rect as { isSpreadRightSheet?: boolean }).isSpreadRightSheet)).toBe(true);
+    expect(fabricMock.rectInstances.some((rect) => (rect as { isSpreadDivider?: boolean }).isSpreadDivider)).toBe(true);
+
+    const shape = canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === "cross-boundary-shape") as { left: number; top: number };
+    expect(shape.left).toBeCloseTo((sheet.left ?? 0) + mmToPx(210) - 20);
+    expect(shape.top).toBeCloseTo((sheet.top ?? 0) + 40);
+  });
+
+  it("persists object moves into active spread elements without touching physical pages", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "left-page", order: 0 },
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "right-page", order: 1 },
+      ],
+      units: [{ id: "unit-spread-1", unitType: "spread", spreadId: "spread-1" }],
+      spreads: [
+        {
+          id: "spread-1",
+          name: "Spread 1",
+          leftPageId: "left-page",
+          rightPageId: "right-page",
+          elements: [
+            {
+              id: "spread-shape",
+              elementType: "shape",
+              shapeKind: "rectangle",
+              fill: "#ff0000",
+              stroke: "#000000",
+              strokeWidth: 0,
+              position: { x: 10, y: 20 },
+              size: { width: 30, height: 40 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "right-page" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "spread-shape")).toBe(true);
+    });
+
+    const shape = canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === "spread-shape") as {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      angle?: number;
+    };
+
+    act(() => {
+      shape.left = (sheet.left ?? 0) + mmToPx(210) + 12;
+      shape.top = (sheet.top ?? 0) + 44;
+      shape.scaleX = 2;
+      shape.angle = 7;
+      canvas.emit("object:modified", { target: shape });
+    });
+
+    const state = useProjectStore.getState().currentProject;
+    const updated = state?.spreads?.[0]?.elements.find((element) => element.id === "spread-shape");
+    expect(updated).toMatchObject({
+      position: { x: mmToPx(210) + 12, y: 44 },
+      size: { width: 60, height: 40 },
+      rotation: 7,
+    });
+    expect(state?.pages[0].elements).toEqual([]);
+    expect(state?.pages[1].elements).toEqual([]);
+  });
+
+  it("adds text to shared spread coordinates across the divider", () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "left-page", order: 0 },
+        { ...structuredClone(TEST_PROJECT.pages[0]), id: "right-page", order: 1 },
+      ],
+      units: [{ id: "unit-spread-1", unitType: "spread", spreadId: "spread-1" }],
+      spreads: [{ id: "spread-1", name: "Spread 1", leftPageId: "left-page", rightPageId: "right-page", elements: [] }],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "left-page" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    act(() => {
+      useUIStore.getState().setSelectedTool("text");
+      canvas.emit("mouse:down", { scenePoint: { x: (sheet.left ?? 0) + mmToPx(210) - 10, y: (sheet.top ?? 0) + 20 } });
+      canvas.emit("mouse:up", { scenePoint: { x: (sheet.left ?? 0) + mmToPx(210) + 50, y: (sheet.top ?? 0) + 50 } });
+    });
+
+    const addedText = useProjectStore.getState().currentProject?.spreads?.[0]?.elements.find(
+      (element) => element.elementType === "text" && element.content === "Text",
+    );
+    expect(addedText).toMatchObject({
+      position: { x: mmToPx(210) - 10, y: 20 },
+      size: { width: 60, height: 30 },
+    });
+    expect(useProjectStore.getState().currentProject?.pages.flatMap((page) => page.elements)).toEqual([]);
+  });
+
   it("renders only the active page content and background when switching pages", async () => {
     const project: Project = {
       ...structuredClone(TEST_PROJECT),

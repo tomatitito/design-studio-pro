@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Canvas as FabricCanvas } from "fabric";
-import { useUIStore, useProjectStore, getActiveProjectPage } from "../stores";
+import { useUIStore, useProjectStore, getActiveEditingUnit } from "../stores";
 import { useCanvasStore, useCanvasStoreApi } from "./CanvasContext";
 import {
   attachCanvasHandlers,
@@ -126,11 +126,11 @@ export function Canvas() {
       project = createPhotoPageProject();
       useProjectStore.getState().setCurrentProject(project);
     }
-    const activePage = getActiveProjectPage(project, useProjectStore.getState().activePageId);
-    const width = activePage?.width ?? project.settings.width;
-    const height = activePage?.height ?? project.settings.height;
-    const background = activePage?.backgroundColor ?? "#ffffff";
-    sheetRef.current = createPageSheet(fabricCanvas, width, height, background);
+    const activeUnit = getActiveEditingUnit(project, useProjectStore.getState().activePageId);
+    const width = activeUnit?.width ?? project.settings.width;
+    const height = activeUnit?.height ?? project.settings.height;
+    const background = activeUnit?.backgroundColor ?? "#ffffff";
+    sheetRef.current = createPageSheet(fabricCanvas, width, height, background, activeUnit?.rightBackgroundColor);
     sheetSizeRef.current = { width, height };
     projectIdRef.current = project.id;
     fitSheetInView(fabricCanvas, sheetRef.current);
@@ -138,7 +138,7 @@ export function Canvas() {
     renderVersionRef.current = initialRenderVersion;
     void renderPageContent(
       fabricCanvas,
-      activePage,
+      activeUnit,
       () => renderVersionRef.current === initialRenderVersion,
     ).then(() => {
       if (renderVersionRef.current === initialRenderVersion) {
@@ -183,17 +183,17 @@ export function Canvas() {
   useEffect(() => {
     if (!canvas || !currentProject || !sheetRef.current) return;
 
-    const activePage = getActiveProjectPage(currentProject, activePageId);
-    const width = activePage?.width ?? currentProject.settings.width;
-    const height = activePage?.height ?? currentProject.settings.height;
-    const background = activePage?.backgroundColor ?? "#ffffff";
+    const activeUnit = getActiveEditingUnit(currentProject, activePageId);
+    const width = activeUnit?.width ?? currentProject.settings.width;
+    const height = activeUnit?.height ?? currentProject.settings.height;
+    const background = activeUnit?.backgroundColor ?? "#ffffff";
     const previousSize = sheetSizeRef.current;
     const previousProjectId = projectIdRef.current;
     const sizeChanged =
       !previousSize || previousSize.width !== width || previousSize.height !== height;
     const projectChanged = previousProjectId !== currentProject.id;
 
-    updatePageSheet(canvas, sheetRef.current, width, height, background);
+    updatePageSheet(canvas, sheetRef.current, width, height, background, activeUnit?.rightBackgroundColor);
     sheetSizeRef.current = { width, height };
     projectIdRef.current = currentProject.id;
 
@@ -204,7 +204,7 @@ export function Canvas() {
 
     const renderVersion = renderVersionRef.current + 1;
     renderVersionRef.current = renderVersion;
-    void renderPageContent(canvas, activePage, () => renderVersionRef.current === renderVersion).then(() => {
+    void renderPageContent(canvas, activeUnit, () => renderVersionRef.current === renderVersion).then(() => {
       if (renderVersionRef.current === renderVersion) {
         restoreCanvasSelection(canvas);
       }

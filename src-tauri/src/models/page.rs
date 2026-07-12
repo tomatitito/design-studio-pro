@@ -3,6 +3,20 @@
 use super::element::Element;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PageKind {
+    Content,
+    EditableBlank,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PhysicalSide {
+    Left,
+    Right,
+}
+
 /// Calendar-specific page metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +34,8 @@ pub struct Page {
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calendar: Option<PageCalendarMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_kind: Option<PageKind>,
     pub elements: Vec<Element>,
     pub width: f64,
     pub height: f64,
@@ -39,6 +55,7 @@ mod tests {
             name: "Main Page".to_string(),
             role: None,
             calendar: None,
+            page_kind: None,
             elements: vec![],
             width: 1920.0,
             height: 1080.0,
@@ -83,6 +100,7 @@ mod tests {
             name: "Page with element".to_string(),
             role: None,
             calendar: None,
+            page_kind: None,
             elements: vec![element],
             width: 800.0,
             height: 600.0,
@@ -101,6 +119,7 @@ mod tests {
             name: "Test Page".to_string(),
             role: None,
             calendar: None,
+            page_kind: None,
             elements: vec![],
             width: 1024.0,
             height: 768.0,

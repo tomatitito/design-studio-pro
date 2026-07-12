@@ -1,5 +1,5 @@
 import { DEFAULT_CALENDAR_THEME_ID, createCalendarMonthPage, createCalendarTitlePage } from "./calendarContracts";
-import type { CalendarMonth, CalendarSettings, Project, ProjectType } from "./types";
+import type { CalendarMonth, CalendarSettings, Page, Project, ProjectType } from "./types";
 
 const A4_PORTRAIT = {
   width: 210,
@@ -31,22 +31,32 @@ function createProjectId(projectType: ProjectType): string {
   return `${projectType}-${Date.now()}`;
 }
 
+function createBlankPage(id: string, name: string, order: number): Page {
+  return {
+    id,
+    name,
+    elements: [],
+    width: A4_PORTRAIT.width,
+    height: A4_PORTRAIT.height,
+    backgroundColor: "#ffffff",
+    order,
+  };
+}
+
 export function createPhotoPageProject(now = new Date().toISOString()): Project {
+  const pages: Page[] = [
+    createBlankPage("page-1", "Title page", 0),
+    { ...createBlankPage("page-2", "Editable blank", 1), pageKind: "editable-blank" },
+    createBlankPage("page-3", "Page 1", 2),
+  ];
+
   return {
     id: createProjectId("photo-page"),
     name: "Untitled",
     projectType: "photo-page",
-    pages: [
-      {
-        id: "page-1",
-        name: "Page 1",
-        elements: [],
-        width: A4_PORTRAIT.width,
-        height: A4_PORTRAIT.height,
-        backgroundColor: "#ffffff",
-        order: 0,
-      },
-    ],
+    pages,
+    units: pages.map((page) => ({ id: `unit-${page.id}`, unitType: "single", pageId: page.id })),
+    spreads: [],
     createdAt: now,
     modifiedAt: now,
     settings: A4_PORTRAIT,

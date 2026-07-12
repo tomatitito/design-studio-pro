@@ -1,8 +1,10 @@
+pub mod desktop;
 pub mod install;
 pub mod manifest;
 pub mod state;
 pub mod types;
 
+pub use crate::updater::desktop::{check_for_desktop_updates, DesktopUpdateOutcome};
 use crate::updater::install::install_prepared_update;
 use crate::updater::manifest::{fetch_manifest, prepare_update};
 use crate::updater::state::{

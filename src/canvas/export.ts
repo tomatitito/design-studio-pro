@@ -19,6 +19,7 @@ import type {
 } from "../types";
 import { normalizeProjectElementCoordinates } from "../projectCoordinates";
 import { getTextAlign, getTextFontWeight, getTextLetterSpacing } from "../textStyles";
+import { getOrderedUnits, normalizeProjectUnits } from "../spreads";
 
 /** Configuration for a PDF page. */
 export interface PdfPageConfig {
@@ -234,6 +235,14 @@ function collectTextElements(page: Page | null | undefined): PdfTextElement[] {
   );
 }
 
+function collectTextEntries(
+  entries: Array<{ element: Element; transform: ExportTransform }>,
+): PdfTextElement[] {
+  return entries.flatMap(({ element, transform }) =>
+    element.elementType === "text" ? [mapTextElement(element, transform)] : [],
+  );
+}
+
 function mapShapeElement(
   element: ShapeElement,
   transform: ExportTransform = IDENTITY_EXPORT_TRANSFORM,
@@ -254,6 +263,14 @@ function mapShapeElement(
 
 function collectShapeElements(page: Page | null | undefined): PdfShapeElement[] {
   return collectElementsInPaintOrder(page).flatMap(({ element, transform }) =>
+    element.elementType === "shape" ? [mapShapeElement(element, transform)] : [],
+  );
+}
+
+function collectShapeEntries(
+  entries: Array<{ element: Element; transform: ExportTransform }>,
+): PdfShapeElement[] {
+  return entries.flatMap(({ element, transform }) =>
     element.elementType === "shape" ? [mapShapeElement(element, transform)] : [],
   );
 }
@@ -280,6 +297,12 @@ function mapImageElement(
 function collectElementsInPaintOrder(
   page: Page | null | undefined,
 ): Array<{ element: Element; transform: ExportTransform }> {
+  return collectElementsFromPaintOrder(page?.elements ?? []);
+}
+
+function collectElementsFromPaintOrder(
+  sourceElements: Element[],
+): Array<{ element: Element; transform: ExportTransform }> {
   const flatten = (
     elements: Element[],
     transform: ExportTransform,
@@ -300,32 +323,42 @@ function collectElementsInPaintOrder(
         return [{ element, transform }];
       });
 
-  return flatten(page?.elements ?? [], IDENTITY_EXPORT_TRANSFORM);
+  return flatten(sourceElements, IDENTITY_EXPORT_TRANSFORM);
 }
 
 function collectImageElements(page: Page | null | undefined): PdfImageElement[] {
-  return collectElementsInPaintOrder(page).flatMap(({ element, transform }) => {
+  return collectImageEntries(collectElementsInPaintOrder(page));
+}
+
+function collectImageEntries(
+  entries: Array<{ element: Element; transform: ExportTransform }>,
+): PdfImageElement[] {
+  return entries.flatMap(({ element, transform }) => {
     if (element.elementType !== "image" || !isExportableImageSource(element.src)) return [];
     return [mapImageElement(element, transform)];
   });
 }
 
 function collectRenderableElements(page: Page | null | undefined): PdfRenderableElement[] {
-  return collectElementsInPaintOrder(page).flatMap(
-    ({ element, transform }): PdfRenderableElement[] => {
-      if (element.elementType === "image") {
-        if (!isExportableImageSource(element.src)) return [];
-        return [{ elementType: "image", ...mapImageElement(element, transform) }];
-      }
-      if (element.elementType === "text") {
-        return [{ elementType: "text", ...mapTextElement(element, transform) }];
-      }
-      if (element.elementType === "shape") {
-        return [{ elementType: "shape", ...mapShapeElement(element, transform) }];
-      }
-      return [];
-    },
-  );
+  return collectRenderableEntries(collectElementsInPaintOrder(page));
+}
+
+function collectRenderableEntries(
+  entries: Array<{ element: Element; transform: ExportTransform }>,
+): PdfRenderableElement[] {
+  return entries.flatMap(({ element, transform }): PdfRenderableElement[] => {
+    if (element.elementType === "image") {
+      if (!isExportableImageSource(element.src)) return [];
+      return [{ elementType: "image", ...mapImageElement(element, transform) }];
+    }
+    if (element.elementType === "text") {
+      return [{ elementType: "text", ...mapTextElement(element, transform) }];
+    }
+    if (element.elementType === "shape") {
+      return [{ elementType: "shape", ...mapShapeElement(element, transform) }];
+    }
+    return [];
+  });
 }
 
 function collectPageExportData(page: Page, project: Project): PdfPageExport {
@@ -348,15 +381,129 @@ function collectPageExportData(page: Page, project: Project): PdfPageExport {
   };
 }
 
+function dimensionToPx(value: number, unit: Project["settings"]["unit"]): number {
+  switch (unit) {
+    case "mm":
+      return (value * 72) / 25.4;
+    case "inch":
+      return value * 72;
+    case "px":
+      return value;
+  }
+}
+
+function rotatePoint(point: { x: number; y: number }, degrees: number): { x: number; y: number } {
+  if (degrees === 0) return point;
+  const radians = (degrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return { x: point.x * cos - point.y * sin, y: point.x * sin + point.y * cos };
+}
+
+function elementWorldCorners(element: Element, transform: ExportTransform): Array<{ x: number; y: number }> {
+  const localCorners = [
+    { x: 0, y: 0 },
+    { x: element.size.width, y: 0 },
+    { x: element.size.width, y: element.size.height },
+    { x: 0, y: element.size.height },
+  ];
+
+  return localCorners.map((corner) => {
+    const elementRotated = rotatePoint(corner, element.rotation);
+    const parentLocal = {
+      x: element.position.x + elementRotated.x,
+      y: element.position.y + elementRotated.y,
+    };
+    const world = rotatePoint(parentLocal, transform.rotationDeg);
+    return { x: transform.offsetX + world.x, y: transform.offsetY + world.y };
+  });
+}
+
+function intersectsHorizontalPage(
+  element: Element,
+  transform: ExportTransform,
+  pageX: number,
+  pageWidth: number,
+): boolean {
+  const corners = elementWorldCorners(element, transform);
+  const minX = Math.min(...corners.map((corner) => corner.x));
+  const maxX = Math.max(...corners.map((corner) => corner.x));
+  return minX < pageX + pageWidth && maxX > pageX;
+}
+
+function translateEntries(
+  entries: Array<{ element: Element; transform: ExportTransform }>,
+  offsetX: number,
+): Array<{ element: Element; transform: ExportTransform }> {
+  return entries.map(({ element, transform }) => ({
+    element,
+    transform: { ...transform, offsetX: transform.offsetX - offsetX },
+  }));
+}
+
+function collectSpreadPageExportData(
+  page: Page,
+  project: Project,
+  spreadElements: Element[],
+  pageX: number,
+): PdfPageExport {
+  const unit = project.settings.unit;
+  const pageWidth = page.width || project.settings.width;
+  const pageHeight = page.height || project.settings.height;
+  const pageWidthPx = dimensionToPx(pageWidth, unit);
+  const entries = translateEntries(
+    collectElementsFromPaintOrder(spreadElements).filter(({ element, transform }) =>
+      intersectsHorizontalPage(element, transform, pageX, pageWidthPx),
+    ),
+    pageX,
+  );
+  const images = collectImageEntries(entries);
+  const texts = collectTextEntries(entries);
+  const shapes = collectShapeEntries(entries);
+
+  return {
+    page: {
+      widthMm: toMm(pageWidth, unit),
+      heightMm: toMm(pageHeight, unit),
+      background: page.backgroundColor,
+    },
+    images,
+    texts,
+    shapes,
+    elements: collectRenderableEntries(entries),
+  };
+}
+
 export function collectProjectExportData(
   canvas: FabricCanvas,
   project: Project,
 ): Omit<PdfExportRequest, "outputPath"> {
   void canvas;
-  const normalizedProject = normalizeProjectElementCoordinates(project);
-  const pages = [...normalizedProject.pages]
-    .sort((a, b) => a.order - b.order)
-    .map((page) => collectPageExportData(page, normalizedProject));
+  const normalizedProject = normalizeProjectUnits(normalizeProjectElementCoordinates(project));
+  const pageById = new Map(normalizedProject.pages.map((page) => [page.id, page]));
+  const spreadById = new Map((normalizedProject.spreads ?? []).map((spread) => [spread.id, spread]));
+  const pages: PdfPageExport[] = [];
+
+  for (const unit of getOrderedUnits(normalizedProject)) {
+    if (unit.unitType === "single") {
+      const page = pageById.get(unit.pageId);
+      if (page) pages.push(collectPageExportData(page, normalizedProject));
+      continue;
+    }
+
+    const spread = spreadById.get(unit.spreadId);
+    if (!spread) continue;
+    const leftPage = pageById.get(spread.leftPageId);
+    const rightPage = pageById.get(spread.rightPageId);
+    if (!leftPage || !rightPage) continue;
+
+    const leftWidth = leftPage.width || normalizedProject.settings.width;
+    const leftPageWidthPx = dimensionToPx(leftWidth, normalizedProject.settings.unit);
+    pages.push(collectSpreadPageExportData(leftPage, normalizedProject, spread.elements, 0));
+    pages.push(
+      collectSpreadPageExportData(rightPage, normalizedProject, spread.elements, leftPageWidthPx),
+    );
+  }
 
   return { pages };
 }

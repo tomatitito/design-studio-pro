@@ -41,6 +41,8 @@ pub fn create_project(name: String, store: State<ProjectStore>) -> Result<Projec
         project_type: ProjectType::PhotoPage,
         calendar: None,
         pages: vec![],
+        units: vec![],
+        spreads: vec![],
         created_at: now.clone(),
         modified_at: now,
         settings: ProjectSettings {
@@ -226,6 +228,8 @@ mod tests {
             project_type: ProjectType::PhotoPage,
             calendar: None,
             pages: vec![],
+            units: vec![],
+            spreads: vec![],
             created_at: now.clone(),
             modified_at: now,
             settings: ProjectSettings {

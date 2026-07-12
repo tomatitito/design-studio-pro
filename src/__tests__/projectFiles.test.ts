@@ -226,6 +226,67 @@ describe("projectFiles", () => {
     );
   });
 
+  it("saves explicit units and shared spread scene", async () => {
+    vi.mocked(save).mockResolvedValue("/tmp/spread.dsproj");
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await saveProjectAs({
+      id: "spread-project",
+      name: "Spread",
+      projectType: "photo-page",
+      createdAt: "2026-01-01T00:00:00Z",
+      modifiedAt: "2026-01-01T00:00:00Z",
+      settings: { width: 210, height: 297, orientation: "portrait", unit: "mm" },
+      pages: [
+        { id: "p1", name: "Title", elements: [], width: 210, height: 297, backgroundColor: "#fff", order: 0 },
+        { id: "sl", name: "Left", elements: [], width: 210, height: 297, backgroundColor: "#fff", order: 1 },
+        { id: "sr", name: "Right", elements: [], width: 210, height: 297, backgroundColor: "#fff", order: 2 },
+      ],
+      units: [
+        { id: "u1", unitType: "single", pageId: "p1" },
+        { id: "us", unitType: "spread", spreadId: "s1" },
+      ],
+      spreads: [
+        {
+          id: "s1",
+          name: "Spread 1",
+          leftPageId: "sl",
+          rightPageId: "sr",
+          elements: [
+            {
+              id: "text-1",
+              elementType: "text",
+              content: "Across",
+              fontFamily: "Inter",
+              fontSize: 16,
+              color: "#111111",
+              position: { x: 200, y: 24 },
+              size: { width: 80, height: 20 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      "save_project_data",
+      expect.objectContaining({
+        project: expect.objectContaining({
+          units: [
+            { id: "u1", unitType: "single", pageId: "p1" },
+            { id: "us", unitType: "spread", spreadId: "s1" },
+          ],
+          spreads: [expect.objectContaining({ elements: [expect.objectContaining({ type: "text" })] })],
+        }),
+      }),
+    );
+  });
+
   it("does not add calendar metadata when saving non-calendar projects", async () => {
     vi.mocked(save).mockResolvedValue("/tmp/photo.dsproj");
     vi.mocked(invoke).mockResolvedValue(undefined);

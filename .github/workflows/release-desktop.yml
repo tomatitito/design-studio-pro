@@ -24,17 +24,32 @@ jobs:
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             tauri_args: --target x86_64-pc-windows-msvc --features cli --bundles nsis
-          - platform_name: macos
-            runner: macos-latest
-            target: ""
-            tauri_args: --features cli
+          - platform_name: macos-x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
+            tauri_args: --target x86_64-apple-darwin --features cli
+          - platform_name: macos-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            tauri_args: --target aarch64-apple-darwin --features cli
           - platform_name: linux
             runner: ubuntu-22.04
-            target: ""
-            tauri_args: --features cli
+            target: x86_64-unknown-linux-gnu
+            tauri_args: --target x86_64-unknown-linux-gnu --features cli
     runs-on: ${{ matrix.runner }}
 
     steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release_tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -51,6 +66,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Linux system dependencies
         if: matrix.platform_name == 'linux'
@@ -70,11 +87,219 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DSP_DESKTOP_UPDATE_BASE_URL: https://github.com/${{ github.repository }}/releases/latest/download
         with:
           tagName: ${{ inputs.release_tag || github.ref_name }}
           releaseName: Design Studio Pro ${{ inputs.release_tag || github.ref_name }}
           releaseBody: Automated cross-platform release artifacts (Windows, macOS, Linux).
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
+
+      - name: Generate desktop update metadata fragment (${{ matrix.platform_name }})
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const platform = process.env.PLATFORM_NAME;
+          const repo = process.env.GITHUB_REPOSITORY;
+          const tag = process.env.RELEASE_TAG;
+          const targetByPlatform = {
+            'windows-x86_64': 'desktop-windows-x86_64',
+            'macos-x86_64': 'desktop-macos-x86_64',
+            'macos-aarch64': 'desktop-macos-aarch64',
+            linux: 'desktop-linux-x86_64',
+          };
+          const extensionPriorityByPlatform = {
+            'windows-x86_64': ['.exe', '.msi'],
+            'macos-x86_64': ['.dmg'],
+            'macos-aarch64': ['.dmg'],
+            linux: ['.AppImage', '.deb', '.rpm'],
+          };
+
+          function walk(dir) {
+            if (!fs.existsSync(dir)) return [];
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+              const fullPath = path.join(dir, entry.name);
+              return entry.isDirectory() ? walk(fullPath) : [fullPath];
+            });
+          }
+
+          const bundleRoots = walk('src-tauri/target').filter((file) => file.includes(`${path.sep}bundle${path.sep}`));
+          const priorities = extensionPriorityByPlatform[platform];
+          const candidates = bundleRoots
+            .filter((file) => priorities.some((ext) => file.endsWith(ext)))
+            .sort((left, right) => {
+              const leftPriority = priorities.findIndex((ext) => left.endsWith(ext));
+              const rightPriority = priorities.findIndex((ext) => right.endsWith(ext));
+              return leftPriority - rightPriority || path.basename(left).localeCompare(path.basename(right));
+            });
+
+          if (candidates.length === 0) {
+            throw new Error(`No desktop installer found for ${platform}`);
+          }
+
+          const file = candidates[0];
+          const artifactName = path.basename(file);
+          if (artifactName === 'dsp' || artifactName === 'dsp.exe' || artifactName.startsWith('dsp-')) {
+            throw new Error(`Refusing CLI-looking desktop artifact: ${artifactName}`);
+          }
+
+          const sha256 = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const fragment = {
+            target: targetByPlatform[platform],
+            asset: {
+              url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(artifactName)}`,
+              sha256,
+              artifact_name: artifactName,
+              artifact_kind: 'desktop-installer',
+            },
+          };
+
+          fs.mkdirSync('desktop-update-fragments', { recursive: true });
+          fs.writeFileSync(
+            `desktop-update-fragments/${platform}.json`,
+            JSON.stringify(fragment, null, 2) + '\n',
+          );
+          NODE
+        env:
+          PLATFORM_NAME: ${{ matrix.platform_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+      - name: Upload desktop update metadata fragment (${{ matrix.platform_name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-update-fragment-${{ matrix.platform_name }}
+          path: desktop-update-fragments/${{ matrix.platform_name }}.json
+          if-no-files-found: error
+
+  publish-desktop-update-manifest:
+    runs-on: ubuntu-22.04
+    needs: build-and-release
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release_tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+      - name: Download desktop update metadata fragments
+        uses: actions/download-artifact@v4
+        with:
+          path: desktop-update-fragments
+          pattern: desktop-update-fragment-*
+          merge-multiple: true
+
+      - name: Generate desktop update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p desktop-update-assets
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const version = process.env.RELEASE_TAG.replace(/^v/, '');
+          const releaseUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.RELEASE_TAG}`;
+          const assets = {};
+          const expectedTargets = new Set([
+            'desktop-windows-x86_64',
+            'desktop-macos-x86_64',
+            'desktop-macos-aarch64',
+            'desktop-linux-x86_64',
+          ]);
+          const expectedExtensions = {
+            'desktop-windows-x86_64': ['.exe', '.msi'],
+            'desktop-macos-x86_64': ['.dmg'],
+            'desktop-macos-aarch64': ['.dmg'],
+            'desktop-linux-x86_64': ['.AppImage', '.deb', '.rpm'],
+          };
+
+          for (const file of fs.readdirSync('desktop-update-fragments').filter((name) => name.endsWith('.json'))) {
+            const fragment = JSON.parse(fs.readFileSync(path.join('desktop-update-fragments', file), 'utf8'));
+            if (!expectedTargets.has(fragment.target)) {
+              throw new Error(`Refusing unsupported desktop target ${fragment.target}`);
+            }
+            if (fragment.asset.artifact_name === 'dsp' || fragment.asset.artifact_name === 'dsp.exe' || fragment.asset.artifact_name.startsWith('dsp-')) {
+              throw new Error(`Refusing CLI-looking desktop artifact ${fragment.asset.artifact_name}`);
+            }
+            if (!expectedExtensions[fragment.target].some((extension) => fragment.asset.artifact_name.endsWith(extension))) {
+              throw new Error(`Refusing unexpected desktop artifact extension for ${fragment.target}: ${fragment.asset.artifact_name}`);
+            }
+            const parsedUrl = new URL(fragment.asset.url);
+            if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'github.com' || !parsedUrl.pathname.includes('/releases/download/')) {
+              throw new Error(`Refusing non-GitHub release asset URL for ${fragment.target}: ${fragment.asset.url}`);
+            }
+            assets[fragment.target] = fragment.asset;
+          }
+
+          const missingTargets = [...expectedTargets].filter((target) => !assets[target]);
+          if (missingTargets.length > 0) {
+            throw new Error(`Missing desktop update metadata for: ${missingTargets.join(', ')}`);
+          }
+
+          const manifest = {
+            channel: 'desktop',
+            version,
+            published_at: new Date().toISOString(),
+            notes_url: releaseUrl,
+            assets,
+          };
+
+          fs.writeFileSync('desktop-update-assets/dsp-desktop-updates.json', JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+      - name: Upload desktop update manifest to draft release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          draft: true
+          files: desktop-update-assets/dsp-desktop-updates.json
+
+      - name: Validate draft release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json isDraft,assets --jq '
+            if (.isDraft != true) then error("desktop release must remain draft until validation completes") else . end |
+            .assets[].name
+          ' > release-asset-names.txt
+
+          while IFS= read -r asset_name; do
+            if ! grep -Fxq "$asset_name" release-asset-names.txt; then
+              echo "Missing release asset: $asset_name" >&2
+              exit 1
+            fi
+          done < <(node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("desktop-update-assets/dsp-desktop-updates.json", "utf8"));
+            for (const asset of Object.values(manifest.assets)) console.log(asset.artifact_name);
+            console.log("dsp-desktop-updates.json");
+          ')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+      - name: Publish desktop release
+        shell: bash
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}

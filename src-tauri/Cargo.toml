@@ -1,8 +1,9 @@
 [package]
 name = "design-studio-pro"
-version = "0.1.5"
+version = "0.1.6"
 description = "Design Studio Pro"
 authors = ["you"]
+repository = "https://github.com/tomatitito/design-studio-pro"
 edition = "2021"
 default-run = "design-studio-pro"
 

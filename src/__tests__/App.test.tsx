@@ -271,7 +271,7 @@ describe("App", () => {
 
     const project = useProjectStore.getState().currentProject;
     expect(project?.projectType).toBe("photo-page");
-    expect(project?.pages[0]?.name).toBe("Page 1");
+    expect(project?.pages.map((page) => page.name)).toEqual(["Title page", "Editable blank", "Page 1"]);
   });
 
   it("opens a saved project from the toolbar", async () => {

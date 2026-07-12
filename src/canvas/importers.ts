@@ -5,7 +5,7 @@ import type { Canvas as FabricCanvas } from "fabric";
 import type { Asset, ImageElement, Position } from "../types";
 import { setElementId } from "./handlers";
 import { setFabricImageSourcePath } from "./documentAdapter";
-import { getActiveProjectPage, useProjectStore, useUIStore } from "../stores";
+import { getActiveEditingUnit, useProjectStore, useUIStore } from "../stores";
 import { findPagePhotoPlaceholders, replacePagePhotoPlaceholder } from "../calendarContracts";
 
 /** Image file extensions supported for import. */
@@ -205,17 +205,19 @@ export async function addImageToCanvas(
   // placeholder selected (or the page has an empty placeholder), replace that
   // slot instead of appending an unrelated image.
   const projectStore = useProjectStore.getState();
-  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
+  const activeUnit = getActiveEditingUnit(projectStore.currentProject, projectStore.activePageId);
+  const page = activeUnit?.page ?? null;
+  const sourceElements = activeUnit?.spread?.elements ?? page?.elements;
   let shouldAddImageToCanvas = true;
-  if (page) {
+  if (activeUnit && sourceElements) {
     const uiStore = useUIStore.getState();
     const selectedIds = new Set(uiStore.selectedElementIds);
-    const placeholders = findPagePhotoPlaceholders(page);
+    const placeholders = activeUnit.unitType === "single" && page ? findPagePhotoPlaceholders(page) : [];
     const placeholder =
       placeholders.find((candidate) => selectedIds.has(candidate.id)) ??
       placeholders.find((candidate) => !candidate.src);
 
-    if (placeholder) {
+    if (placeholder && page) {
       shouldAddImageToCanvas = false;
       setElementId(img, placeholder.id);
       projectStore.updatePage(
@@ -248,15 +250,13 @@ export async function addImageToCanvas(
         },
         rotation: 0,
         opacity: 1,
-        zIndex: page.elements.length,
+        zIndex: sourceElements.length,
         locked: false,
         visible: true,
         borderStyle: "custom",
         borderWidth: 0,
       };
-      projectStore.updatePage(page.id, {
-        elements: [...page.elements, imageElement],
-      });
+      projectStore.updateActiveElements([...sourceElements, imageElement]);
       projectStore.setDirty(true);
     }
   } else {

@@ -4,6 +4,9 @@ import { getElementId } from "./handlers";
 const GUIDE_COLOR = "#ff3366";
 const GUIDE_LINE_WIDTH = 1;
 const SNAP_THRESHOLD = 5;
+const PAGE_SHEET_FLAG = "isPageSheet";
+const SPREAD_RIGHT_SHEET_FLAG = "isSpreadRightSheet";
+const SPREAD_DIVIDER_FLAG = "isSpreadDivider";
 
 interface GuideLine {
   orientation: "horizontal" | "vertical";
@@ -27,6 +30,8 @@ export function attachSmartGuides(canvas: FabricCanvas): () => void {
     if (!target) return;
 
     const objects = canvas.getObjects().filter((obj) => {
+      const record = obj as unknown as Record<string, unknown>;
+      if (record[PAGE_SHEET_FLAG] || record[SPREAD_RIGHT_SHEET_FLAG] || record[SPREAD_DIVIDER_FLAG]) return false;
       return obj !== target && getElementId(obj) !== getElementId(target);
     });
 

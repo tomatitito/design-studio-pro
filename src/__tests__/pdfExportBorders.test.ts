@@ -416,6 +416,148 @@ describe("collectProjectExportData", () => {
     ]);
   });
 
+  it("exports shared spread scene as ordered clipped left and translated right physical pages", () => {
+    const boundaryPx = (210 * 72) / 25.4;
+    const project: Project = {
+      id: "spread-project",
+      name: "Spread export",
+      projectType: "photo-page",
+      pages: [
+        {
+          id: "title",
+          name: "Title",
+          elements: [text({ id: "title-text", content: "Title" })],
+          width: 210,
+          height: 297,
+          backgroundColor: "#ffffff",
+          order: 0,
+        },
+        {
+          id: "left",
+          name: "Spread left",
+          elements: [],
+          width: 210,
+          height: 297,
+          backgroundColor: "#ffeeee",
+          order: 1,
+        },
+        {
+          id: "right",
+          name: "Spread right",
+          elements: [],
+          width: 210,
+          height: 297,
+          backgroundColor: "#eeeeff",
+          order: 2,
+        },
+        {
+          id: "after",
+          name: "After",
+          elements: [text({ id: "after-text", content: "After" })],
+          width: 210,
+          height: 297,
+          backgroundColor: "#ffffff",
+          order: 3,
+        },
+      ],
+      units: [
+        { id: "unit-title", unitType: "single", pageId: "title" },
+        { id: "unit-spread", unitType: "spread", spreadId: "spread-1" },
+        { id: "unit-after", unitType: "single", pageId: "after" },
+      ],
+      spreads: [
+        {
+          id: "spread-1",
+          name: "Spread 1",
+          leftPageId: "left",
+          rightPageId: "right",
+          elements: [
+            shape({
+              id: "cross-boundary",
+              position: { x: boundaryPx - 36, y: 72 },
+              size: { width: 72, height: 72 },
+            }),
+            text({ id: "right-only", content: "Right", position: { x: boundaryPx + 72, y: 36 } }),
+          ],
+        },
+      ],
+      createdAt: "2026-06-11T00:00:00Z",
+      modifiedAt: "2026-06-11T00:00:00Z",
+      settings: { width: 210, height: 297, orientation: "portrait", unit: "mm" },
+    };
+
+    const data = collectProjectExportData({} as FabricCanvas, project);
+
+    expect(data.pages).toHaveLength(4);
+    expect(data.pages?.map((page) => page.page.background)).toEqual([
+      "#ffffff",
+      "#ffeeee",
+      "#eeeeff",
+      "#ffffff",
+    ]);
+    expect(data.pages?.[1].shapes).toEqual([
+      expect.objectContaining({
+        xMm: expect.closeTo(197.3),
+        yMm: expect.closeTo(25.4),
+        widthMm: expect.closeTo(25.4),
+      }),
+    ]);
+    expect(data.pages?.[2].shapes).toEqual([
+      expect.objectContaining({
+        xMm: expect.closeTo(-12.7),
+        yMm: expect.closeTo(25.4),
+        widthMm: expect.closeTo(25.4),
+      }),
+    ]);
+    expect(data.pages?.[2].texts).toEqual([
+      expect.objectContaining({ content: "Right", xMm: expect.closeTo(25.4) }),
+    ]);
+  });
+
+  it("includes rotated grouped spread elements whose transformed bounds cross the page boundary", () => {
+    const boundaryPx = (210 * 72) / 25.4;
+    const project: Project = {
+      id: "rotated-spread-project",
+      name: "Rotated spread export",
+      projectType: "photo-page",
+      pages: [
+        { id: "left", name: "Spread left", elements: [], width: 210, height: 297, backgroundColor: "#fff", order: 0 },
+        { id: "right", name: "Spread right", elements: [], width: 210, height: 297, backgroundColor: "#fff", order: 1 },
+      ],
+      units: [{ id: "unit-spread", unitType: "spread", spreadId: "spread-1" }],
+      spreads: [
+        {
+          id: "spread-1",
+          name: "Spread 1",
+          leftPageId: "left",
+          rightPageId: "right",
+          elements: [
+            group({
+              id: "rotated-group",
+              position: { x: boundaryPx - 5, y: 100 },
+              rotation: 45,
+              children: [
+                shape({
+                  id: "rotated-child",
+                  position: { x: 0, y: 20 },
+                  size: { width: 30, height: 30 },
+                }),
+              ],
+            }),
+          ],
+        },
+      ],
+      createdAt: "2026-06-11T00:00:00Z",
+      modifiedAt: "2026-06-11T00:00:00Z",
+      settings: { width: 210, height: 297, orientation: "portrait", unit: "mm" },
+    };
+
+    const data = collectProjectExportData({} as FabricCanvas, project);
+
+    expect(data.pages?.[0].shapes).toHaveLength(1);
+    expect(data.pages?.[1].shapes).toHaveLength(1);
+  });
+
   it("normalizes moved/resized text display-pixel coordinates for multi-page A4 PDF export data", () => {
     const project: Project = {
       id: "project-1",

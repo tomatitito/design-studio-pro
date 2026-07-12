@@ -137,6 +137,11 @@ fn rewrite_image_element_sources(project: &mut Project, rewrites: &[AssetPathRew
             rewrite_image_element_source(element, rewrites);
         }
     }
+    for spread in &mut project.spreads {
+        for element in &mut spread.elements {
+            rewrite_image_element_source(element, rewrites);
+        }
+    }
 }
 
 fn rewrite_image_element_source(element: &mut Element, rewrites: &[AssetPathRewrite]) {
@@ -293,7 +298,7 @@ mod tests {
     use super::*;
     use crate::models::{
         CalendarSettings, Dimensions, Element, ElementType, MeasurementUnit, Orientation, Page,
-        PageCalendarMetadata, Position, ProjectSettings, ProjectType, Size,
+        PageCalendarMetadata, Position, ProjectSettings, ProjectType, ProjectUnit, Size, Spread,
     };
     use image::{ImageBuffer, Rgba};
     use tempfile::TempDir;
@@ -309,12 +314,15 @@ mod tests {
                 name: "Main Page".to_string(),
                 role: None,
                 calendar: None,
+                page_kind: None,
                 elements: vec![],
                 width: 1920.0,
                 height: 1080.0,
                 background_color: "#FFFFFF".to_string(),
                 order: 0,
             }],
+            units: vec![],
+            spreads: vec![],
             created_at: "2026-02-24T10:00:00Z".to_string(),
             modified_at: "2026-02-24T12:00:00Z".to_string(),
             settings: ProjectSettings {
@@ -512,6 +520,7 @@ mod tests {
             name: "Januar".to_string(),
             role: Some("month".to_string()),
             calendar: Some(PageCalendarMetadata { month: 1 }),
+            page_kind: None,
             elements: vec![
                 Element {
                     id: "photo-slot-1".to_string(),
@@ -597,6 +606,85 @@ mod tests {
             loaded.manifest.project.pages[0].elements[1].role.as_deref(),
             Some("month-label")
         );
+    }
+
+    #[test]
+    fn save_load_roundtrip_preserves_units_and_spread_scene() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("spread-roundtrip.dsproj");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        let mut project = create_test_project();
+        project.pages.push(Page {
+            id: "spread-left".to_string(),
+            name: "Left".to_string(),
+            role: None,
+            calendar: None,
+            page_kind: None,
+            elements: vec![],
+            width: 1920.0,
+            height: 1080.0,
+            background_color: "#FFFFFF".to_string(),
+            order: 1,
+        });
+        project.pages.push(Page {
+            id: "spread-right".to_string(),
+            name: "Right".to_string(),
+            role: None,
+            calendar: None,
+            page_kind: None,
+            elements: vec![],
+            width: 1920.0,
+            height: 1080.0,
+            background_color: "#FFFFFF".to_string(),
+            order: 2,
+        });
+        project.units = vec![
+            ProjectUnit::Single {
+                id: "unit-page1".to_string(),
+                page_id: "page1".to_string(),
+            },
+            ProjectUnit::Spread {
+                id: "unit-spread".to_string(),
+                spread_id: "spread1".to_string(),
+            },
+        ];
+        project.spreads = vec![Spread {
+            id: "spread1".to_string(),
+            name: "Spread 1".to_string(),
+            left_page_id: "spread-left".to_string(),
+            right_page_id: "spread-right".to_string(),
+            elements: vec![Element {
+                id: "text1".to_string(),
+                element_type: ElementType::Text {
+                    content: "Across".to_string(),
+                    font_family: "Arial".to_string(),
+                    font_size: 16.0,
+                    color: "#000000".to_string(),
+                    font_weight: None,
+                    text_align: None,
+                    letter_spacing: None,
+                },
+                role: None,
+                position: Position { x: 1900.0, y: 20.0 },
+                size: Size {
+                    width: 100.0,
+                    height: 20.0,
+                },
+                rotation: 0.0,
+                opacity: 1.0,
+                z_index: 0,
+                locked: false,
+                visible: true,
+            }],
+        }];
+
+        save_project(output_path.to_str().unwrap(), &project, &[]).unwrap();
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
+
+        assert_eq!(loaded.manifest.project.units, project.units);
+        assert_eq!(loaded.manifest.project.spreads, project.spreads);
     }
 
     #[test]
@@ -710,6 +798,96 @@ mod tests {
                 assert!(Path::new(src).exists());
             }
             _ => panic!("expected image element"),
+        }
+    }
+
+    #[test]
+    fn load_project_rewrites_spread_image_sources_to_extracted_asset() {
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("spread-asset.dsproj");
+        let extract_dir = temp_dir.path().join("extracted");
+
+        let mut project = create_test_project();
+        let asset = create_test_asset(&temp_dir);
+        let original_asset_path = asset.file_path.clone();
+        project.pages.push(Page {
+            id: "spread-left".to_string(),
+            name: "Left".to_string(),
+            role: None,
+            calendar: None,
+            page_kind: None,
+            elements: vec![],
+            width: 1920.0,
+            height: 1080.0,
+            background_color: "#FFFFFF".to_string(),
+            order: 1,
+        });
+        project.pages.push(Page {
+            id: "spread-right".to_string(),
+            name: "Right".to_string(),
+            role: None,
+            calendar: None,
+            page_kind: None,
+            elements: vec![],
+            width: 1920.0,
+            height: 1080.0,
+            background_color: "#FFFFFF".to_string(),
+            order: 2,
+        });
+        project.units = vec![
+            ProjectUnit::Single {
+                id: "unit-page1".to_string(),
+                page_id: "page1".to_string(),
+            },
+            ProjectUnit::Spread {
+                id: "unit-spread".to_string(),
+                spread_id: "spread1".to_string(),
+            },
+        ];
+        project.spreads = vec![Spread {
+            id: "spread1".to_string(),
+            name: "Spread 1".to_string(),
+            left_page_id: "spread-left".to_string(),
+            right_page_id: "spread-right".to_string(),
+            elements: vec![Element {
+                id: "spread-image".to_string(),
+                element_type: ElementType::Image {
+                    asset_id: Some(asset.id.clone()),
+                    src: original_asset_path.clone(),
+                    alt: asset.name.clone(),
+                    border_style: None,
+                    border_color: None,
+                    border_width: None,
+                },
+                role: None,
+                position: Position { x: 1900.0, y: 20.0 },
+                size: Size {
+                    width: 100.0,
+                    height: 75.0,
+                },
+                rotation: 0.0,
+                opacity: 1.0,
+                z_index: 0,
+                locked: false,
+                visible: true,
+            }],
+        }];
+
+        let original_bytes = fs::read(&original_asset_path).unwrap();
+        save_project(output_path.to_str().unwrap(), &project, &[asset]).unwrap();
+        fs::remove_file(&original_asset_path).unwrap();
+
+        let loaded =
+            load_project(output_path.to_str().unwrap(), extract_dir.to_str().unwrap()).unwrap();
+
+        match &loaded.manifest.project.spreads[0].elements[0].element_type {
+            ElementType::Image { src, .. } => {
+                assert_ne!(src, &original_asset_path);
+                assert!(src.contains("extracted"));
+                assert!(Path::new(src).exists());
+                assert_eq!(fs::read(src).unwrap(), original_bytes);
+            }
+            _ => panic!("expected spread image element"),
         }
     }
 

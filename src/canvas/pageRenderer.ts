@@ -2,6 +2,7 @@ import { FabricImage, Group, Rect, Textbox } from "fabric";
 import type { Canvas as FabricCanvas, FabricObject } from "fabric";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Element, GroupElement, ImageElement, Page, ShapeElement, TextElement } from "../types";
+import type { ActiveEditingUnit } from "../stores/projectStore";
 import { getTextAlign, getTextFontWeight, getTextLetterSpacing } from "../textStyles";
 import { bindImageElementToFabricObject } from "./documentAdapter";
 import { setElementId } from "./handlers";
@@ -215,19 +216,20 @@ async function createObjectForElement(
  */
 export async function renderPageContent(
   canvas: FabricCanvas,
-  page: Page | null,
+  page: Page | ActiveEditingUnit | null,
   shouldContinue: () => boolean = () => true,
 ): Promise<void> {
   removePageContent(canvas);
   canvas.discardActiveObject();
 
-  if (!page || !shouldContinue()) {
+  const elementsSource = page && "unitType" in page ? (page.spread?.elements ?? page.page?.elements) : page?.elements;
+  if (!elementsSource || !shouldContinue()) {
     canvas.requestRenderAll();
     return;
   }
 
   const origin = getPageSheetOrigin(canvas);
-  const elements = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
+  const elements = [...elementsSource].sort((a, b) => a.zIndex - b.zIndex);
   for (const element of elements) {
     const obj = await createObjectForElement(element, origin);
     if (!shouldContinue()) return;

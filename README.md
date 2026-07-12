@@ -14,6 +14,7 @@ Core paths that work today:
 - PDF export pipeline in Rust (`printpdf`)
 - CLI support for `new`, `open`, and `export-pdf`
 - Image border presets and export support (UI + CLI + PDF rendering)
+- Planned double-page spread workflow docs: pagination, cross-boundary editing, and two-page PDF output
 
 ## Prerequisites
 
@@ -53,7 +54,7 @@ This repo uses `package.json` as the single source of truth for app versioning.
 
 Workflows:
 - `.github/workflows/version-bump-release.yml`: watches version bumps in `package.json` on `main` / `master`, synchronizes `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, creates tag `v<version>`.
-- `.github/workflows/release-desktop.yml`: runs on tag pushes (`v*`) and builds/uploads Windows, macOS, and Linux release assets.
+- `.github/workflows/release-desktop.yml`: runs on tag pushes (`v*`), builds/uploads Windows, macOS, and Linux release assets, and publishes desktop-only update metadata (`dsp-desktop-updates.json`).
 - `.github/workflows/release-cli.yml`: runs on tag pushes (`v*`) and publishes standalone `dsp` archives plus `dsp-checksums.txt` and `dsp-updates.json`.
 
 Release flow (automatic tag + release):
@@ -74,6 +75,7 @@ What CI does:
 3. Creates and pushes tag `v0.2.0` (if missing).
 4. Builds and publishes release assets for Windows, macOS, Linux on the GitHub Release for that tag.
 5. Builds and publishes standalone CLI archives and update metadata for `dsp` on the same tagged release.
+6. Publishes desktop-only update metadata for packaged app update checks.
 
 You can also run local sync manually:
 
@@ -110,6 +112,8 @@ Official `dsp` self-update support is limited to the user-scoped install locatio
 
 Package-manager installs are intentionally unsupported for self-update. On startup, `dsp` checks for updates for official installs, and the manual commands are `dsp update check` and `dsp self-update`.
 
+Desktop update checks are separate from CLI self-update. `File > Check for Updates...` reads `dsp-desktop-updates.json` and only reports desktop installer releases. Details: [docs/updates.md](docs/updates.md)
+
 ## Logging and Observability
 
 Zustand store mutations are logged through Rust (`target: "zustand"`).  
@@ -133,6 +137,7 @@ Details: [AGENTS.md](AGENTS.md)
 ## Architecture Docs
 
 - Current implementation overview: [docs/architecture-current.md](docs/architecture-current.md)
+- Double-page spread user guide and behavior notes: [docs/double-page-spreads.md](docs/double-page-spreads.md)
 - Product and planning specs: [specs/README.md](specs/README.md)
 
 ## First Tasks For New Contributors

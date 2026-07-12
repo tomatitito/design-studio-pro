@@ -976,7 +976,31 @@ fn add_renderable_elements_to_layer(
     Ok(())
 }
 
+fn add_page_clip_to_layer(current_layer: &PdfLayerReference, page: &PdfPageConfig) {
+    let clip = Rect::new(
+        Mm(0.0),
+        Mm(0.0),
+        Mm(page.width_mm as f32),
+        Mm(page.height_mm as f32),
+    )
+    .with_mode(PaintMode::Clip)
+    .with_winding(WindingOrder::NonZero);
+    current_layer.add_rect(clip);
+}
+
 fn add_page_content_to_layer(
+    current_layer: &PdfLayerReference,
+    doc: &PdfDocumentReference,
+    page_export: &PdfPageExport,
+) -> Result<(), String> {
+    current_layer.save_graphics_state();
+    add_page_clip_to_layer(current_layer, &page_export.page);
+    let result = add_unclipped_page_content_to_layer(current_layer, doc, page_export);
+    current_layer.restore_graphics_state();
+    result
+}
+
+fn add_unclipped_page_content_to_layer(
     current_layer: &PdfLayerReference,
     doc: &PdfDocumentReference,
     page_export: &PdfPageExport,
@@ -1092,6 +1116,62 @@ mod tests {
 
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+    }
+
+    #[test]
+    fn test_export_pages_emit_explicit_clip_paths() {
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let request = PdfExportRequest {
+            page: None,
+            images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
+            pages: vec![PdfPageExport {
+                page: PdfPageConfig {
+                    width_mm: 10.0,
+                    height_mm: 10.0,
+                    background: Some("#ffffff".to_string()),
+                },
+                images: vec![],
+                texts: vec![],
+                shapes: vec![PdfShapeElement {
+                    shape_kind: "rectangle".to_string(),
+                    x_mm: -5.0,
+                    y_mm: 0.0,
+                    width_mm: 20.0,
+                    height_mm: 5.0,
+                    rotation_deg: 0.0,
+                    fill: "#ff0000".to_string(),
+                    stroke: "#ff0000".to_string(),
+                    stroke_width: 0.0,
+                    opacity: 1.0,
+                }],
+                elements: vec![],
+            }],
+            output_path: output_path.clone(),
+        };
+
+        let result = export_pdf(&request);
+        assert!(result.is_ok(), "Failed to export clipped PDF: {:?}", result);
+
+        let pdf_bytes = std::fs::read(&output_path).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+
+        let clip_ops = Rect::new(Mm(0.0), Mm(0.0), Mm(10.0), Mm(10.0))
+            .with_mode(PaintMode::Clip)
+            .with_winding(WindingOrder::NonZero)
+            .into_stream_op();
+        assert_eq!(
+            clip_ops[1].operator, "W",
+            "clip path must use nonzero clipping operator"
+        );
+        assert_eq!(
+            clip_ops[2].operator, "n",
+            "clip path must end without painting"
+        );
     }
 
     #[test]
@@ -1479,6 +1559,89 @@ mod tests {
 
         let pdf_bytes = std::fs::read(&output_path).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+    }
+
+    #[test]
+    fn test_export_spread_physical_pages_accept_boundary_clipped_elements() {
+        let output = NamedTempFile::new().unwrap();
+        let output_path = output.path().to_str().unwrap().to_string();
+
+        let request = PdfExportRequest {
+            page: None,
+            images: vec![],
+            texts: vec![],
+            shapes: vec![],
+            elements: vec![],
+            pages: vec![
+                PdfPageExport {
+                    page: PdfPageConfig {
+                        width_mm: 210.0,
+                        height_mm: 297.0,
+                        background: Some("#ffeeee".to_string()),
+                    },
+                    images: vec![],
+                    texts: vec![],
+                    shapes: vec![],
+                    elements: vec![PdfRenderableElement::Shape(PdfShapeElement {
+                        shape_kind: "rectangle".to_string(),
+                        x_mm: 197.3,
+                        y_mm: 25.4,
+                        width_mm: 25.4,
+                        height_mm: 25.4,
+                        rotation_deg: 0.0,
+                        fill: "#f4e7d3".to_string(),
+                        stroke: "#c084fc".to_string(),
+                        stroke_width: 0.7,
+                        opacity: 1.0,
+                    })],
+                },
+                PdfPageExport {
+                    page: PdfPageConfig {
+                        width_mm: 210.0,
+                        height_mm: 297.0,
+                        background: Some("#eeeeff".to_string()),
+                    },
+                    images: vec![],
+                    texts: vec![],
+                    shapes: vec![],
+                    elements: vec![
+                        PdfRenderableElement::Shape(PdfShapeElement {
+                            shape_kind: "rectangle".to_string(),
+                            x_mm: -12.7,
+                            y_mm: 25.4,
+                            width_mm: 25.4,
+                            height_mm: 25.4,
+                            rotation_deg: 0.0,
+                            fill: "#f4e7d3".to_string(),
+                            stroke: "#c084fc".to_string(),
+                            stroke_width: 0.7,
+                            opacity: 1.0,
+                        }),
+                        PdfRenderableElement::Text(pdf_text(|text| {
+                            text.content = "Right page content".to_string();
+                            text.x_mm = 25.4;
+                            text.y_mm = 50.8;
+                        })),
+                    ],
+                },
+            ],
+            output_path: output_path.clone(),
+        };
+
+        let result = export_pdf(&request);
+        assert!(
+            result.is_ok(),
+            "spread physical page export should accept off-page clipped geometry: {:?}",
+            result
+        );
+
+        let pdf_bytes = std::fs::read(&output_path).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Output is not a valid PDF");
+        let pdf_text = String::from_utf8_lossy(&pdf_bytes);
+        assert!(
+            pdf_text.matches("/MediaBox").count() >= 2,
+            "PDF should contain at least two physical page boxes"
+        );
     }
 
     #[test]

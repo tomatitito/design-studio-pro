@@ -1,7 +1,7 @@
 import type { Canvas as FabricCanvas, FabricObject, ModifiedEvent } from "fabric";
 import type { TEvent } from "fabric";
 import { useUIStore } from "../stores";
-import { getActiveProjectPage, useProjectStore } from "../stores";
+import { getActiveEditingUnit, useProjectStore } from "../stores";
 import { updateElementById } from "../elementTree";
 import type { Element } from "../types";
 
@@ -66,13 +66,14 @@ function updateElementFromFabricObject(
   if (!id) return false;
 
   const projectStore = useProjectStore.getState();
-  const page = getActiveProjectPage(projectStore.currentProject, projectStore.activePageId);
-  if (!page) return false;
+  const activeUnit = getActiveEditingUnit(projectStore.currentProject, projectStore.activePageId);
+  const sourceElements = activeUnit?.spread?.elements ?? activeUnit?.page?.elements;
+  if (!sourceElements) return false;
 
-  const { elements, updated } = updateElementById(page.elements, id, updater);
+  const { elements, updated } = updateElementById(sourceElements, id, updater);
   if (!updated) return false;
 
-  projectStore.updatePage(page.id, { elements });
+  projectStore.updateActiveElements(elements);
   return true;
 }
 

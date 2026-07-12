@@ -1,5 +1,6 @@
 //! Project model and settings.
 
+use super::element::Element;
 use super::page::Page;
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +54,26 @@ pub struct CalendarSettings {
     pub theme_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "unitType", rename_all = "camelCase")]
+pub enum ProjectUnit {
+    #[serde(rename_all = "camelCase")]
+    Single { id: String, page_id: String },
+    #[serde(rename_all = "camelCase")]
+    Spread { id: String, spread_id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Spread {
+    pub id: String,
+    pub name: String,
+    pub left_page_id: String,
+    pub right_page_id: String,
+    #[serde(default)]
+    pub elements: Vec<Element>,
+}
+
 /// A design project containing pages and settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +85,10 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calendar: Option<CalendarSettings>,
     pub pages: Vec<Page>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub units: Vec<ProjectUnit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spreads: Vec<Spread>,
     pub created_at: String,
     pub modified_at: String,
     pub settings: ProjectSettings,
@@ -121,6 +146,8 @@ mod tests {
             project_type: ProjectType::PhotoPage,
             calendar: None,
             pages: vec![],
+            units: vec![],
+            spreads: vec![],
             created_at: "2026-02-24T10:00:00Z".to_string(),
             modified_at: "2026-02-24T10:00:00Z".to_string(),
             settings,
@@ -140,6 +167,7 @@ mod tests {
             name: "First Page".to_string(),
             role: None,
             calendar: None,
+            page_kind: None,
             elements: vec![],
             width: 1920.0,
             height: 1080.0,
@@ -160,6 +188,8 @@ mod tests {
             project_type: ProjectType::PhotoPage,
             calendar: None,
             pages: vec![page],
+            units: vec![],
+            spreads: vec![],
             created_at: "2026-02-24T10:00:00Z".to_string(),
             modified_at: "2026-02-24T10:00:00Z".to_string(),
             settings,
@@ -213,6 +243,34 @@ mod tests {
     }
 
     #[test]
+    fn project_deserializes_units_and_spreads() {
+        let json = r##"{
+            "id":"proj1",
+            "name":"Spread Project",
+            "projectType":"photo-page",
+            "pages":[
+                {"id":"title","name":"Title","elements":[],"width":210.0,"height":297.0,"backgroundColor":"#fff","order":0},
+                {"id":"left","name":"Left","elements":[],"width":210.0,"height":297.0,"backgroundColor":"#fff","order":1},
+                {"id":"right","name":"Right","elements":[],"width":210.0,"height":297.0,"backgroundColor":"#fff","order":2}
+            ],
+            "units":[
+                {"id":"unit-title","unitType":"single","pageId":"title"},
+                {"id":"unit-spread","unitType":"spread","spreadId":"spread1"}
+            ],
+            "spreads":[{"id":"spread1","name":"Spread 1","leftPageId":"left","rightPageId":"right","elements":[]}],
+            "createdAt":"2026-02-24T10:00:00Z",
+            "modifiedAt":"2026-02-24T10:00:00Z",
+            "settings":{"width":210.0,"height":297.0,"orientation":"portrait","unit":"mm"}
+        }"##;
+
+        let project: Project = serde_json::from_str(json).unwrap();
+
+        assert_eq!(project.units.len(), 2);
+        assert_eq!(project.spreads[0].left_page_id, "left");
+        assert_eq!(project.spreads[0].right_page_id, "right");
+    }
+
+    #[test]
     fn project_serializes_to_json() {
         let settings = ProjectSettings {
             width: 800.0,
@@ -231,6 +289,8 @@ mod tests {
                 theme_id: Some("classic".to_string()),
             }),
             pages: vec![],
+            units: vec![],
+            spreads: vec![],
             created_at: "2026-02-24T10:00:00Z".to_string(),
             modified_at: "2026-02-24T10:00:00Z".to_string(),
             settings,

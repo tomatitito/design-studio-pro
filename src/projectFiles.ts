@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type { Asset, Element, Project } from "./types";
 import { normalizeProjectElementCoordinates } from "./projectCoordinates";
 import { calendarMetadataOrDefault, projectTypeOrDefault } from "./projectTemplates";
+import { normalizeProjectUnits } from "./spreads";
 
 type BackendElement = Omit<Element, "elementType" | "children"> & {
   type: Element["elementType"];
@@ -13,8 +14,13 @@ type BackendPage = Omit<Project["pages"][number], "elements"> & {
   elements: BackendElement[];
 };
 
-type BackendProject = Omit<Project, "pages"> & {
+type BackendSpread = Omit<NonNullable<Project["spreads"]>[number], "elements"> & {
+  elements: BackendElement[];
+};
+
+type BackendProject = Omit<Project, "pages" | "spreads"> & {
   pages: BackendPage[];
+  spreads?: BackendSpread[];
 };
 
 interface LoadProjectResult {
@@ -33,7 +39,7 @@ function toBackendElement(element: Element): BackendElement {
 }
 
 function toBackendProject(project: Project) {
-  const normalizedProject = normalizeProjectElementCoordinates(project);
+  const normalizedProject = normalizeProjectUnits(normalizeProjectElementCoordinates(project));
   const projectType = projectTypeOrDefault(normalizedProject);
   const backendProject = {
     ...normalizedProject,
@@ -42,6 +48,11 @@ function toBackendProject(project: Project) {
     pages: normalizedProject.pages.map((page) => ({
       ...page,
       elements: page.elements.map(toBackendElement),
+    })),
+    units: normalizedProject.units,
+    spreads: (normalizedProject.spreads ?? []).map((spread) => ({
+      ...spread,
+      elements: spread.elements.map(toBackendElement),
     })),
   };
 
@@ -78,17 +89,21 @@ function toFrontendProject(project: BackendProject): Project {
       ...page,
       elements: page.elements.map(toFrontendElement),
     })),
+    spreads: (project.spreads ?? []).map((spread) => ({
+      ...spread,
+      elements: spread.elements.map(toFrontendElement),
+    })),
   };
 
   if (projectType === "calendar") {
-    return normalizeProjectElementCoordinates({
+    return normalizeProjectUnits(normalizeProjectElementCoordinates({
       ...frontendProject,
       calendar: calendarMetadataOrDefault(project),
-    });
+    }));
   }
 
   delete frontendProject.calendar;
-  return normalizeProjectElementCoordinates(frontendProject);
+  return normalizeProjectUnits(normalizeProjectElementCoordinates(frontendProject));
 }
 
 export async function saveProjectAs(project: Project): Promise<string | null> {

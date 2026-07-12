@@ -110,8 +110,8 @@ fn handle_check_for_updates(app: tauri::AppHandle) {
             }
         };
 
-        match runtime.block_on(updater::check_for_updates(&version, true)) {
-            Ok(updater::CheckOutcome::UpToDate { .. }) => {
+        match runtime.block_on(updater::check_for_desktop_updates(&version)) {
+            Ok(updater::DesktopUpdateOutcome::UpToDate { .. }) => {
                 app.dialog()
                     .message(format!("Design Studio Pro {version} is up to date."))
                     .title("Design Studio Pro")
@@ -119,70 +119,41 @@ fn handle_check_for_updates(app: tauri::AppHandle) {
                     .buttons(MessageDialogButtons::Ok)
                     .blocking_show();
             }
-            Ok(updater::CheckOutcome::UpdateAvailable {
+            Ok(updater::DesktopUpdateOutcome::UpdateAvailable {
                 current_version,
                 latest_version,
-                official_install,
+                notes_url,
+                artifact_name,
                 ..
             }) => {
-                if !official_install {
-                    app.dialog()
-                        .message(format!(
-                            "Design Studio Pro {latest_version} is available, but automatic installation is supported only for official installs.\n\nCurrent version: {current_version}"
-                        ))
-                        .title("Update Available")
-                        .kind(MessageDialogKind::Warning)
-                        .buttons(MessageDialogButtons::Ok)
-                        .blocking_show();
-                    return;
-                }
-
-                let should_install = app
-                    .dialog()
+                let open_release = app.dialog()
                     .message(format!(
-                        "Design Studio Pro {latest_version} is available.\n\nCurrent version: {current_version}\n\nInstall it now?"
+                        "Design Studio Pro {latest_version} is available.\n\nCurrent version: {current_version}\nInstaller: {artifact_name}\n\nOpen the release page to download and run the desktop installer."
                     ))
                     .title("Update Available")
                     .kind(MessageDialogKind::Info)
                     .buttons(MessageDialogButtons::OkCancelCustom(
-                        "Install".to_string(),
+                        "Open Release Page".to_string(),
                         "Cancel".to_string(),
                     ))
                     .blocking_show();
 
-                if !should_install {
-                    return;
-                }
-
-                match runtime.block_on(updater::self_update(&version)) {
-                    Ok(updater::InstallOutcome::UpToDate { .. }) => {
-                        app.dialog()
-                            .message(format!("Design Studio Pro {version} is up to date."))
-                            .title("Design Studio Pro")
-                            .kind(MessageDialogKind::Info)
-                            .buttons(MessageDialogButtons::Ok)
-                            .blocking_show();
-                    }
-                    Ok(updater::InstallOutcome::Installed { new_version, .. })
-                    | Ok(updater::InstallOutcome::StagedWindowsReplacement {
-                        new_version, ..
-                    }) => {
-                        app.dialog()
-                            .message(format!(
-                                "Design Studio Pro was updated to {new_version}. Restart the app to use the new version."
-                            ))
-                            .title("Update Installed")
-                            .kind(MessageDialogKind::Info)
-                            .buttons(MessageDialogButtons::Ok)
-                            .blocking_show();
-                    }
-                    Err(error) => {
-                        show_update_error(&app, &format!("Failed to install update: {error}"));
+                if open_release {
+                    if let Err(error) = tauri_plugin_opener::open_url(&notes_url, None::<&str>) {
+                        log::warn!("failed to open desktop update release URL: {error}");
+                        show_update_error(
+                            &app,
+                            "Could not open the release page. Please visit the official GitHub releases page to download the latest installer.",
+                        );
                     }
                 }
             }
             Err(error) => {
-                show_update_error(&app, &format!("Failed to check for updates: {error}"));
+                log::warn!("desktop update check failed: {error}");
+                show_update_error(
+                    &app,
+                    "Could not check for updates. Please try again later or download the latest installer from the official release page.",
+                );
             }
         }
     });

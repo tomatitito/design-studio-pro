@@ -1,9 +1,12 @@
-import { Rect, Shadow, Point, type Canvas as FabricCanvas } from "fabric";
+import { Rect, Shadow, Point, type Canvas as FabricCanvas, type FabricObject } from "fabric";
 import { useUIStore } from "../stores";
 import { createPageBackgroundFill } from "../backgrounds";
 
 /** DPI used to convert mm to screen pixels. */
 export const DISPLAY_DPI = 72;
+
+const SPREAD_RIGHT_SHEET_FLAG = "isSpreadRightSheet";
+const SPREAD_DIVIDER_FLAG = "isSpreadDivider";
 
 export interface PagePreset {
   label: string;
@@ -37,9 +40,12 @@ export function createPageSheet(
   widthMm: number,
   heightMm: number,
   background: string,
+  rightBackground?: string,
 ): Rect {
   const w = mmToPx(widthMm);
   const h = mmToPx(heightMm);
+  const isSpread = rightBackground !== undefined;
+  const pageW = isSpread ? w / 2 : w;
 
   const canvasW = canvas.getWidth();
   const canvasH = canvas.getHeight();
@@ -51,7 +57,7 @@ export function createPageSheet(
     top: (canvasH - h) / 2,
     originX: "left",
     originY: "top",
-    fill: createPageBackgroundFill(background, w, h),
+    fill: createPageBackgroundFill(background, pageW, h),
     strokeWidth: 0,
     selectable: true,
     evented: true,
@@ -76,6 +82,9 @@ export function createPageSheet(
   (sheet as any).__pageDragTop = sheet.top ?? 0;
 
   canvas.add(sheet);
+  if (isSpread) {
+    createSpreadAdornments(canvas, sheet, pageW, h, rightBackground);
+  }
   canvas.sendObjectToBack(sheet);
   canvas.requestRenderAll();
 
@@ -91,9 +100,12 @@ export function updatePageSheet(
   widthMm: number,
   heightMm: number,
   background: string,
+  rightBackground?: string,
 ): void {
   const w = mmToPx(widthMm);
   const h = mmToPx(heightMm);
+  const isSpread = rightBackground !== undefined;
+  const pageW = isSpread ? w / 2 : w;
   const sizeChanged = sheet.width !== w || sheet.height !== h;
 
   const canvasW = canvas.getWidth();
@@ -102,7 +114,7 @@ export function updatePageSheet(
   const update: Record<string, unknown> = {
     width: w,
     height: h,
-    fill: createPageBackgroundFill(background, w, h),
+    fill: createPageBackgroundFill(background, pageW, h),
   };
 
   if (sizeChanged) {
@@ -117,7 +129,72 @@ export function updatePageSheet(
   (sheet as any).__pageDragTop = sheet.top ?? 0;
 
   sheet.setCoords();
+  syncSpreadAdornments(canvas, sheet, isSpread, pageW, h, rightBackground);
   canvas.requestRenderAll();
+}
+
+function removeSpreadAdornments(canvas: FabricCanvas): void {
+  const getObjects = (canvas as unknown as { getObjects?: () => FabricObject[] }).getObjects;
+  if (!getObjects) return;
+  const objects = getObjects.call(canvas);
+  for (const obj of [...objects]) {
+    const record = obj as unknown as Record<string, unknown>;
+    if (!record[SPREAD_RIGHT_SHEET_FLAG] && !record[SPREAD_DIVIDER_FLAG]) continue;
+    canvas.remove(obj);
+    const index = objects.indexOf(obj);
+    if (index !== -1) objects.splice(index, 1);
+  }
+}
+
+function createSpreadAdornments(
+  canvas: FabricCanvas,
+  sheet: Rect,
+  pageW: number,
+  height: number,
+  rightBackground = "#ffffff",
+): void {
+  const rightSheet = new Rect({
+    width: pageW,
+    height,
+    left: (sheet.left ?? 0) + pageW,
+    top: sheet.top ?? 0,
+    originX: "left",
+    originY: "top",
+    fill: createPageBackgroundFill(rightBackground, pageW, height),
+    strokeWidth: 0,
+    selectable: false,
+    evented: false,
+  });
+  const divider = new Rect({
+    width: 0,
+    height,
+    left: (sheet.left ?? 0) + pageW,
+    top: sheet.top ?? 0,
+    originX: "left",
+    originY: "top",
+    fill: "transparent",
+    stroke: "rgba(0,0,0,0.35)",
+    strokeWidth: 1,
+    selectable: false,
+    evented: false,
+    excludeFromExport: true,
+  });
+  (rightSheet as unknown as Record<string, unknown>)[SPREAD_RIGHT_SHEET_FLAG] = true;
+  (divider as unknown as Record<string, unknown>)[SPREAD_DIVIDER_FLAG] = true;
+  canvas.add(rightSheet);
+  canvas.add(divider);
+}
+
+function syncSpreadAdornments(
+  canvas: FabricCanvas,
+  sheet: Rect,
+  isSpread: boolean,
+  pageW: number,
+  height: number,
+  rightBackground?: string,
+): void {
+  removeSpreadAdornments(canvas);
+  if (isSpread) createSpreadAdornments(canvas, sheet, pageW, height, rightBackground);
 }
 
 /**

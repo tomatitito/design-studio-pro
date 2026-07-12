@@ -26,7 +26,8 @@ import {
   DEFAULT_CALENDAR_THEME_ID,
 } from "../calendarContracts";
 import { findElementById, updateElementById } from "../elementTree";
-import type { Page, TextAlign, TextElement } from "../types";
+import { getOrderedUnits, getPhysicalPages } from "../spreads";
+import type { Page, ProjectUnit, Spread, TextAlign, TextElement } from "../types";
 
 const PANELS: { id: Panel; label: string }[] = [
   { id: "layers", label: "Layers" },
@@ -46,19 +47,26 @@ export function Sidebar() {
   const setActivePage = useProjectStore((s) => s.setActivePage);
   const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
   const addPage = useProjectStore((s) => s.addPage);
-  const removePage = useProjectStore((s) => s.removePage);
   const updatePage = useProjectStore((s) => s.updatePage);
+  const insertSpreadAfter = useProjectStore((s) => s.insertSpreadAfter);
+  const deleteSpread = useProjectStore((s) => s.deleteSpread);
+  const deleteSinglePage = useProjectStore((s) => s.deleteSinglePage);
+  const moveUnit = useProjectStore((s) => s.moveUnit);
   const setDirty = useProjectStore((s) => s.setDirty);
   const canvas = useCanvasStore((s) => s.canvas);
   const [borderColor, setBorderColor] = useState("#000000");
   const [borderWidth, setBorderWidth] = useState(2);
   const [borderStyle, setBorderStyle] = useState<ImageBorderStyleId>("custom");
+  const [alignmentPrompt, setAlignmentPrompt] = useState<{ afterUnitId: string } | null>(null);
+  const [deletePrompt, setDeletePrompt] = useState<{ pageId: string } | null>(null);
   const currentPage = useProjectStore(selectActivePage);
   const orderedPages = useMemo(
     () => [...(currentProject?.pages ?? [])].sort((a, b) => a.order - b.order),
     [currentProject?.pages],
   );
-  const canDeletePages = orderedPages.length > 1;
+  const pageUnits = useMemo(() => (currentProject ? getOrderedUnits(currentProject) : []), [currentProject]);
+  const physicalPages = useMemo(() => (currentProject ? getPhysicalPages(currentProject) : []), [currentProject]);
+  const canDeletePages = physicalPages.length > 1;
   const activeSolidColor = useMemo(() => {
     if (!currentPage) return "#ffffff";
     return currentPage.backgroundColor.startsWith("#") ? currentPage.backgroundColor : "#ffffff";
@@ -104,23 +112,89 @@ export function Sidebar() {
     return `page-${Date.now()}`;
   };
 
+  const createBlankPage = (name: string, pageKind?: Page["pageKind"]): Page => ({
+    id: createPageId(),
+    name,
+    elements: [],
+    width: currentProject?.settings.width ?? 210,
+    height: currentProject?.settings.height ?? 297,
+    backgroundColor: "#ffffff",
+    order: orderedPages.length,
+    pageKind,
+  });
+
+  const createSpread = (): { spread: Spread; leftPage: Page; rightPage: Page } => {
+    const id = createPageId();
+    const leftPage = createBlankPage(`Spread ${pageUnits.length + 1} left`);
+    const rightPage = createBlankPage(`Spread ${pageUnits.length + 1} right`);
+    leftPage.id = `${id}-left`;
+    rightPage.id = `${id}-right`;
+    return {
+      spread: {
+        id: `spread-${id}`,
+        name: `Spread ${pageUnits.length + 1}`,
+        leftPageId: leftPage.id,
+        rightPageId: rightPage.id,
+        elements: [],
+      },
+      leftPage,
+      rightPage,
+    };
+  };
+
   const handleAddPage = () => {
     if (!currentProject) return;
-    const nextPageNumber = orderedPages.length + 1;
-    const nextOrder = orderedPages[orderedPages.length - 1]?.order ?? -1;
-    const page: Page = {
-      id: createPageId(),
-      name: `Page ${nextPageNumber}`,
-      elements: [],
-      width: currentProject.settings.width,
-      height: currentProject.settings.height,
-      backgroundColor: "#ffffff",
-      order: nextOrder + 1,
-    };
+    const page = createBlankPage(`Page ${orderedPages.length + 1}`);
 
     addPage(page);
     setActivePage(page.id);
     setDirty(true);
+  };
+
+  const getActiveUnit = (): ProjectUnit | null => {
+    if (!currentProject) return null;
+    return (
+      pageUnits.find((unit) => {
+        if (unit.unitType === "single") return unit.pageId === activePageId;
+        const spread = currentProject.spreads?.find((item) => item.id === unit.spreadId);
+        return spread?.leftPageId === activePageId || spread?.rightPageId === activePageId;
+      }) ?? pageUnits[pageUnits.length - 1] ?? null
+    );
+  };
+
+  const insertSpreadAfterUnit = (afterUnitId: string) => {
+    const { spread, leftPage, rightPage } = createSpread();
+    const result = insertSpreadAfter(afterUnitId, spread, leftPage, rightPage);
+    if (result.status === "requires-blank") {
+      setAlignmentPrompt({ afterUnitId });
+      return;
+    }
+    if (result.status === "reserved-opening") return;
+    setAlignmentPrompt(null);
+    setActivePage(leftPage.id);
+    setDirty(true);
+  };
+
+  const handleAddSpread = () => {
+    const unit = getActiveUnit();
+    if (!unit) return;
+    insertSpreadAfterUnit(unit.id);
+  };
+
+  const handleInsertEditableBlankThenSpread = () => {
+    if (!currentProject || !alignmentPrompt) return;
+    const afterIndex = pageUnits.findIndex((unit) => unit.id === alignmentPrompt.afterUnitId);
+    const blank = createBlankPage("Editable blank page", "editable-blank");
+    addPage(blank);
+    const moved = moveUnit(`unit-${blank.id}`, afterIndex + 1);
+    if (moved.status !== "moved") return;
+    const next = createSpread();
+    const result = insertSpreadAfter(`unit-${blank.id}`, next.spread, next.leftPage, next.rightPage);
+    if (result.status === "inserted") {
+      setActivePage(next.leftPage.id);
+      setAlignmentPrompt(null);
+      setDirty(true);
+    }
   };
 
   const handleSelectPage = (pageId: string) => {
@@ -130,8 +204,32 @@ export function Sidebar() {
 
   const handleDeletePage = (pageId: string) => {
     if (!canDeletePages) return;
-    removePage(pageId);
+    const result = deleteSinglePage(pageId);
+    if (result.status === "requires-blank-replacement") {
+      setDeletePrompt({ pageId });
+      return;
+    }
+    if (result.status === "deleted") setDirty(true);
+  };
+
+  const handleDeleteWithBlankReplacement = () => {
+    if (!deletePrompt) return;
+    const result = deleteSinglePage(deletePrompt.pageId, true);
+    if (result.status === "deleted") {
+      setDeletePrompt(null);
+      setDirty(true);
+    }
+  };
+
+  const handleDeleteSpread = (spreadId: string) => {
+    if (!canDeletePages) return;
+    deleteSpread(spreadId);
     setDirty(true);
+  };
+
+  const handleMoveUnit = (unitId: string, toIndex: number) => {
+    const result = moveUnit(unitId, toIndex);
+    if (result.status === "moved") setDirty(true);
   };
 
   const updateSelectedText = (
@@ -600,20 +698,59 @@ export function Sidebar() {
 
         {activePanel === "pages" && (
           <div className="flex h-full min-h-0 flex-col p-3 text-xs text-neutral-300">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                Pages
+            <div className="mb-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  Pages
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddPage}
+                  disabled={!currentProject}
+                  className="rounded border border-blue-500/70 bg-blue-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:bg-neutral-800 disabled:text-neutral-500"
+                  data-testid="add-page-button"
+                >
+                  Add Page
+                </button>
               </div>
               <button
                 type="button"
-                onClick={handleAddPage}
-                disabled={!currentProject}
-                className="rounded border border-blue-500/70 bg-blue-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:bg-neutral-800 disabled:text-neutral-500"
-                data-testid="add-page-button"
+                onClick={handleAddSpread}
+                disabled={!currentProject || pageUnits.length === 0}
+                className="w-full rounded border border-purple-500/70 bg-purple-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:bg-neutral-800 disabled:text-neutral-500"
+                data-testid="add-spread-button"
               >
-                Add Page
+                Add double page
               </button>
             </div>
+
+            {alignmentPrompt && (
+              <div className="mb-3 rounded border border-amber-500/50 bg-amber-500/10 p-2" data-testid="spread-alignment-prompt">
+                <div className="mb-2 text-[11px] text-amber-100">Double page must start on a left page.</div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={handleInsertEditableBlankThenSpread} className="rounded bg-amber-500 px-2 py-1 text-[10px] font-medium text-neutral-950" data-testid="insert-editable-blank-choice">
+                    Insert editable blank page
+                  </button>
+                  <button type="button" onClick={() => setAlignmentPrompt(null)} className="rounded border border-neutral-600 px-2 py-1 text-[10px] text-neutral-200" data-testid="cancel-spread-insert-choice">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {deletePrompt && (
+              <div className="mb-3 rounded border border-red-500/50 bg-red-500/10 p-2" data-testid="delete-page-prompt">
+                <div className="mb-2 text-[11px] text-red-100">Deleting this page would invalidate a later spread.</div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={handleDeleteWithBlankReplacement} className="rounded bg-red-500 px-2 py-1 text-[10px] font-medium text-white" data-testid="insert-blank-replacement-choice">
+                    Insert blank replacement
+                  </button>
+                  <button type="button" onClick={() => setDeletePrompt(null)} className="rounded border border-neutral-600 px-2 py-1 text-[10px] text-neutral-200" data-testid="cancel-deletion-choice">
+                    Cancel deletion
+                  </button>
+                </div>
+              </div>
+            )}
 
             {!currentProject && (
               <div className="rounded border border-neutral-700 bg-neutral-900/60 p-3 text-neutral-500">
@@ -627,12 +764,53 @@ export function Sidebar() {
               </div>
             )}
 
-            {currentProject && orderedPages.length > 0 && (
+            {currentProject && pageUnits.length > 0 && (
               <div
                 className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
                 data-testid="pages-list"
               >
-                {orderedPages.map((page, index) => {
+                {pageUnits.map((unit, unitIndex) => {
+                  if (unit.unitType === "spread") {
+                    const spread = currentProject.spreads?.find((item) => item.id === unit.spreadId);
+                    const left = currentProject.pages.find((page) => page.id === spread?.leftPageId);
+                    const right = currentProject.pages.find((page) => page.id === spread?.rightPageId);
+                    if (!spread || !left || !right) return null;
+                    const isActive = activePageId === left.id || activePageId === right.id;
+                    return (
+                      <div
+                        key={unit.id}
+                        className={`rounded-lg border p-2 transition ${isActive ? "border-blue-400 bg-blue-500/15" : "border-purple-500/40 bg-neutral-900/60"}`}
+                        data-testid={`spread-item-${spread.id}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPage(left.id)}
+                          className="w-full text-left"
+                          aria-current={isActive ? "page" : undefined}
+                          data-testid={`select-spread-${spread.id}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-white">{spread.name}</span>
+                            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] text-purple-200">Spread</span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-1 text-[10px] text-neutral-400">
+                            <div className="rounded border border-neutral-700 bg-neutral-800 p-1" data-testid={`spread-left-${spread.id}`}>Left · {left.name}</div>
+                            <div className="rounded border border-neutral-700 bg-neutral-800 p-1" data-testid={`spread-right-${spread.id}`}>Right · {right.name}</div>
+                          </div>
+                        </button>
+                        <div className="mt-2 flex justify-end gap-1">
+                          <button type="button" onClick={() => handleMoveUnit(unit.id, unitIndex - 1)} className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300" data-testid={`move-up-${unit.id}`}>Up</button>
+                          <button type="button" onClick={() => handleMoveUnit(unit.id, unitIndex + 1)} className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300" data-testid={`move-down-${unit.id}`}>Down</button>
+                          <button type="button" onClick={() => handleDeleteSpread(spread.id)} disabled={!canDeletePages} className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:text-neutral-600" data-testid={`delete-spread-${spread.id}`}>Delete</button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const page = currentProject.pages.find((item) => item.id === unit.pageId);
+                  if (!page) return null;
+                  const physical = physicalPages.find((ref) => ref.page.id === page.id);
+                  const index = physicalPages.findIndex((ref) => ref.page.id === page.id);
                   const isActive = page.id === activePageId;
                   return (
                     <div
@@ -653,25 +831,25 @@ export function Sidebar() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium text-white">{page.name}</span>
-                          {isActive && (
-                            <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-200">
-                              Active
-                            </span>
-                          )}
+                          <span className="rounded bg-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-200">
+                            {page.pageKind === "editable-blank" ? "Editable blank" : physical?.side === "left" ? "Left" : "Right"}
+                          </span>
                         </div>
                         <div className="mt-1 text-[10px] text-neutral-500">
                           Page {index + 1} · {page.width} × {page.height}
                         </div>
                       </button>
 
-                      <div className="mt-2 flex justify-end">
+                      <div className="mt-2 flex justify-end gap-1">
+                        <button type="button" onClick={() => handleMoveUnit(unit.id, unitIndex - 1)} className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300" data-testid={`move-up-${unit.id}`}>Up</button>
+                        <button type="button" onClick={() => handleMoveUnit(unit.id, unitIndex + 1)} className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300" data-testid={`move-down-${unit.id}`}>Down</button>
                         <button
                           type="button"
                           onClick={() => handleDeletePage(page.id)}
                           disabled={!canDeletePages}
                           className="rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 transition hover:border-red-400 hover:text-red-200 disabled:cursor-not-allowed disabled:text-neutral-600 disabled:hover:border-neutral-700"
                           data-testid={`delete-page-${page.id}`}
-                          title={canDeletePages ? "Delete page" : "Cannot delete the final page"}
+                          title={canDeletePages ? "Delete page" : "Cannot delete final page"}
                         >
                           Delete
                         </button>

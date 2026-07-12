@@ -215,6 +215,76 @@ describe("addImageToCanvas", () => {
     expect(useUIStore.getState().selectedElementIds).toEqual(["title-slot"]);
   });
 
+  it("persists imported images into active spread coordinates", async () => {
+    const image = {
+      width: 400,
+      height: 200,
+      scaleX: 1,
+      scaleY: 1,
+      left: 0,
+      top: 0,
+      set: vi.fn((update: Record<string, unknown>) => {
+        Object.assign(image, update);
+      }),
+    };
+    fabricImageFromURL.mockResolvedValue(image);
+    useProjectStore.setState((state) => ({
+      currentProject: state.currentProject
+        ? {
+            ...state.currentProject,
+            pages: [
+              { ...state.currentProject.pages[0], id: "left-page", order: 0 },
+              { ...state.currentProject.pages[0], id: "right-page", order: 1 },
+            ],
+            units: [{ id: "unit-spread-1", unitType: "spread", spreadId: "spread-1" }],
+            spreads: [{ id: "spread-1", name: "Spread 1", leftPageId: "left-page", rightPageId: "right-page", elements: [] }],
+          }
+        : null,
+      activePageId: "right-page",
+    }));
+
+    const sheet = {
+      isPageSheet: true,
+      left: 100,
+      top: 80,
+      width: 1680,
+      height: 1188,
+      scaleX: 1,
+      scaleY: 1,
+    };
+    const canvas = {
+      viewportTransform: [1, 0, 0, 1, 0, 0],
+      getZoom: vi.fn(() => 1),
+      getWidth: vi.fn(() => 800),
+      getHeight: vi.fn(() => 600),
+      getObjects: vi.fn(() => [sheet]),
+      add: vi.fn(),
+      setActiveObject: vi.fn(),
+      requestRenderAll: vi.fn(),
+    };
+    const asset: Asset = {
+      id: "asset-spread",
+      name: "spread.jpg",
+      filePath: "/tmp/spread.jpg",
+      thumbnailPath: null,
+      fileSize: 0,
+      mimeType: "image/jpeg",
+      dimensions: { width: 400, height: 200 },
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+
+    await addImageToCanvas(canvas as never, asset, { x: 960, y: 200 });
+
+    const state = useProjectStore.getState().currentProject;
+    expect(state?.spreads?.[0]?.elements[0]).toMatchObject({
+      id: "asset-spread",
+      position: { x: 860, y: 120 },
+      size: { width: 400, height: 200 },
+    });
+    expect(state?.pages.flatMap((page) => page.elements)).toEqual([]);
+    expect(canvas.add).toHaveBeenCalledWith(image);
+  });
+
   it("persists explicit drop positions relative to the page sheet", async () => {
     const image = {
       width: 400,

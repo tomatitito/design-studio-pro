@@ -67,6 +67,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Verify packaged desktop updater configuration
+        working-directory: src-tauri
+        env:
+          DSP_DESKTOP_UPDATE_BASE_URL: https://github.com/example/design-studio-pro/releases/latest/download
+          DSP_TEST_REQUIRE_DESKTOP_UPDATE_URL: "1"
+        run: cargo test --lib updater::desktop::tests::packaged_desktop_build_embeds_manifest_url_when_required
+
       - name: Run Rust tests with CLI feature
         working-directory: src-tauri
         run: cargo test --features cli

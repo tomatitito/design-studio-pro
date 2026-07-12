@@ -154,7 +154,49 @@ CLI and GUI share Rust models/core code paths, which keeps file format and PDF b
 - Rust command stores are in-memory and simple by design.
 - Frontend uses direct state updates for many workflows; not every edit path goes through backend commands immediately.
 
-## 7) Where To Extend
+## 7) Planned Double-Page Spread Architecture
+
+Double-page spread support uses explicit ordered units instead of inferring pairs from page parity. See user-facing behavior in [double-page-spreads.md](double-page-spreads.md).
+
+### Persistence invariants
+
+- Project order is represented as explicit units: single pages and spreads.
+- Legacy projects with only `pages` migrate by preserving page order and treating every page as a single-page unit.
+- Each spread stores left/right physical page identity and metadata plus one shared element scene.
+- Physical pages remain available for pagination, sidebar labeling, save/load, and PDF export.
+- Existing pages are not converted into spreads; insertion creates a new spread unit.
+
+### Pagination and validation invariants
+
+- First project page is physical right.
+- Following physical page is editable blank left.
+- First photo/content page starts on physical right.
+- Every spread starts on physical left and consumes exactly two equal-sized physical pages.
+- Side calculation, normalization, insertion, deletion, movement, and reorder validation belong in domain helpers.
+- UI components must call domain helpers instead of independently implementing pagination rules.
+- Misaligned spread insertion offers exactly `Insert editable blank page` and `Cancel`.
+- Deleting a single page that would invalidate a later spread offers exactly `Insert blank replacement` and `Cancel deletion`.
+
+### Coordinate invariants
+
+- Single pages use page-relative coordinates.
+- Spreads use spread-relative coordinates with width `2 * page.width` and height `page.height`.
+- Left page covers `x = 0..page.width`.
+- Right page covers `x = page.width..2 * page.width`.
+- Boundary width is zero; gutter/divider is visual only.
+- Elements, guides, and selections may cross the boundary.
+- A spread owns one shared element scene; cross-boundary elements are not duplicated while editing.
+
+### PDF clipping invariants
+
+- Export emits two physical PDF pages for each spread.
+- Left output page clips spread scene to `x = 0..page.width`.
+- Right output page clips spread scene to `x = page.width..2 * page.width`.
+- Right-page rendering translates content by `-page.width`.
+- Cross-boundary elements appear on both outputs through clipping.
+- Initial export clips exactly at the zero-width boundary; print bleed is future work.
+
+## 8) Where To Extend
 
 - New canvas behavior:
   - Add/update logic in `src/canvas/*`

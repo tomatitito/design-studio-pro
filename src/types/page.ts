@@ -5,6 +5,9 @@ export interface PageCalendarMetadata {
   month?: CalendarMonth;
 }
 
+export type PageKind = "content" | "editable-blank";
+export type PhysicalSide = "left" | "right";
+
 export interface Page {
   id: string;
   name: string;
@@ -15,4 +18,5 @@ export interface Page {
   order: number;
   role?: CalendarPageRole;
   calendar?: PageCalendarMetadata;
+  pageKind?: PageKind;
 }

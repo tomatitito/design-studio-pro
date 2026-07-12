@@ -13,9 +13,10 @@ pub mod project;
 // Re-export all types for convenience
 pub use asset::{Asset, Dimensions};
 pub use element::{Element, ElementType, Position, ShapeKind, Size};
-pub use page::{Page, PageCalendarMetadata};
+pub use page::{Page, PageCalendarMetadata, PageKind, PhysicalSide};
 pub use project::{
     CalendarSettings, MeasurementUnit, Orientation, Project, ProjectSettings, ProjectType,
+    ProjectUnit, Spread,
 };
 
 /// Metadata for a design project.

@@ -12,11 +12,20 @@ export type {
   Element,
 } from "./element";
 
-export type { Page, PageCalendarMetadata } from "./page";
+export type { Page, PageCalendarMetadata, PageKind, PhysicalSide } from "./page";
 
 export type { CalendarElementRole, CalendarMonth, CalendarPageRole, CalendarThemeId } from "./calendar";
 
-export type { CalendarSettings, Project, ProjectSettings, ProjectType } from "./project";
+export type {
+  CalendarSettings,
+  Project,
+  ProjectSettings,
+  ProjectType,
+  ProjectUnit,
+  SinglePageUnit,
+  Spread,
+  SpreadUnit,
+} from "./project";
 
 export type { Asset } from "./asset";
 

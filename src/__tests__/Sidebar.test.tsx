@@ -8,8 +8,10 @@ import {
   createCalendarTitlePage,
   findPagePhotoPlaceholders,
 } from "../calendarContracts";
+import { createPhotoPageProject } from "../projectTemplates";
+import { insertSpreadAfter, validateProjectPagination } from "../spreads";
 import { CALENDAR_FONT_OPTIONS } from "../textStyles";
-import type { CalendarElementRole, Element, Project } from "../types";
+import type { CalendarElementRole, Element, Page, Project, Spread } from "../types";
 
 function findElementByRole(elements: Element[] | undefined, role: CalendarElementRole): Element | undefined {
   for (const element of elements ?? []) {
@@ -52,6 +54,26 @@ function renderSidebar() {
       <Sidebar />
     </CanvasProvider>,
   );
+}
+
+function page(id: string): Page {
+  return {
+    id,
+    name: id,
+    elements: [],
+    width: 210,
+    height: 297,
+    backgroundColor: "#ffffff",
+    order: 0,
+  };
+}
+
+function spread(id: string): { spread: Spread; left: Page; right: Page } {
+  return {
+    spread: { id, name: "Spread", leftPageId: `${id}-left`, rightPageId: `${id}-right`, elements: [] },
+    left: page(`${id}-left`),
+    right: page(`${id}-right`),
+  };
 }
 
 describe("Sidebar text properties", () => {
@@ -307,5 +329,83 @@ describe("Sidebar pages panel", () => {
     const pagesAfterDelete = useProjectStore.getState().currentProject?.pages ?? [];
     expect(pagesAfterDelete.map((page) => page.id)).not.toContain(thirdPage.id);
     expect(pagesAfterDelete).toHaveLength(2);
+  });
+
+  it("adds and deletes a grouped double page after selected unit", () => {
+    useProjectStore.setState({
+      currentProject: createPhotoPageProject("2026-01-01T00:00:00Z"),
+      projects: [],
+      activePageId: "page-3",
+      isDirty: false,
+    });
+    renderSidebar();
+
+    fireEvent.click(screen.getByTestId("add-spread-button"));
+
+    const project = useProjectStore.getState().currentProject;
+    const createdSpread = project?.spreads?.[0];
+    expect(createdSpread).toBeTruthy();
+    expect(screen.getByTestId(`spread-item-${createdSpread?.id}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`spread-left-${createdSpread?.id}`)).toHaveTextContent("Left");
+    expect(screen.getByTestId(`spread-right-${createdSpread?.id}`)).toHaveTextContent("Right");
+    expect(useProjectStore.getState().activePageId).toBe(createdSpread?.leftPageId);
+    expect(validateProjectPagination(project!)).toEqual([]);
+
+    fireEvent.click(screen.getByTestId(`delete-spread-${createdSpread?.id}`));
+    expect(useProjectStore.getState().currentProject?.spreads).toEqual([]);
+    expect(useProjectStore.getState().currentProject?.pages.map((item) => item.id)).not.toContain(
+      createdSpread?.leftPageId,
+    );
+  });
+
+  it("shows exact alignment choices before inserting an editable blank plus double page", () => {
+    useProjectStore.setState({
+      currentProject: { ...structuredClone(TEST_PROJECT), pages: [page("page-1"), page("page-2")] },
+      projects: [],
+      activePageId: "page-2",
+      isDirty: false,
+    });
+    renderSidebar();
+
+    fireEvent.click(screen.getByTestId("add-spread-button"));
+
+    expect(screen.getByTestId("insert-editable-blank-choice")).toHaveTextContent(
+      "Insert editable blank page",
+    );
+    expect(screen.getByTestId("cancel-spread-insert-choice")).toHaveTextContent("Cancel");
+
+    fireEvent.click(screen.getByTestId("insert-editable-blank-choice"));
+
+    const project = useProjectStore.getState().currentProject;
+    expect(project?.spreads).toHaveLength(1);
+    expect(project?.pages.some((item) => item.pageKind === "editable-blank" && item.name === "Editable blank page")).toBe(true);
+    expect(validateProjectPagination(project!)).toEqual([]);
+  });
+
+  it("shows exact deletion guard choices and inserts blank replacement", () => {
+    const base = createPhotoPageProject("2026-01-01T00:00:00Z");
+    const data = spread("spread-guard");
+    const inserted = insertSpreadAfter(base, "unit-page-3", data.spread, data.left, data.right);
+    if (inserted.status !== "inserted") throw new Error("expected inserted");
+    useProjectStore.setState({
+      currentProject: inserted.project,
+      projects: [],
+      activePageId: "page-1",
+      isDirty: false,
+    });
+    renderSidebar();
+
+    fireEvent.click(screen.getByTestId("delete-page-page-1"));
+
+    expect(screen.getByTestId("insert-blank-replacement-choice")).toHaveTextContent(
+      "Insert blank replacement",
+    );
+    expect(screen.getByTestId("cancel-deletion-choice")).toHaveTextContent("Cancel deletion");
+
+    fireEvent.click(screen.getByTestId("insert-blank-replacement-choice"));
+
+    const project = useProjectStore.getState().currentProject;
+    expect(project?.pages[0]).toMatchObject({ pageKind: "editable-blank", elements: [] });
+    expect(validateProjectPagination(project!)).toEqual([]);
   });
 });
