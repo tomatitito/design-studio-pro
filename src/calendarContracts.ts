@@ -4,6 +4,7 @@ import type {
   CalendarPageRole,
   CalendarThemeId,
   Element,
+  GroupElement,
   ImageElement,
   Page,
   Position,
@@ -25,6 +26,7 @@ export const CALENDAR_ELEMENT_ROLES = [
   "photo-placeholder",
   "title-text",
   "subtitle-text",
+  "calendar-data",
   "month-label",
   "date-grid",
   "theme",
@@ -365,6 +367,25 @@ export function createCalendarTitlePage(options: CreateCalendarTitlePageOptions 
   };
 }
 
+const CALENDAR_DATA_BLOCK_POSITION = { x: mmToDisplayPx(18), y: mmToDisplayPx(161) };
+const CALENDAR_DATA_BLOCK_SIZE = { width: mmToDisplayPx(174), height: mmToDisplayPx(64) };
+
+function createCalendarDataGroupElement(year: number, month: CalendarMonth): GroupElement {
+  return {
+    id: `calendar-month-${month}-data`,
+    elementType: "group",
+    role: "calendar-data",
+    children: [createMonthLabelElement(year, month), createDateGridElement(year, month)],
+    position: { ...CALENDAR_DATA_BLOCK_POSITION },
+    size: { ...CALENDAR_DATA_BLOCK_SIZE },
+    rotation: 0,
+    opacity: 1,
+    zIndex: 4,
+    locked: false,
+    visible: true,
+  };
+}
+
 function createMonthLabelElement(year: number, month: CalendarMonth): TextElement {
   const calendarMonth = generateGermanCalendarMonth(year, month);
 
@@ -379,11 +400,11 @@ function createMonthLabelElement(year: number, month: CalendarMonth): TextElemen
     fontWeight: "600",
     textAlign: "center",
     letterSpacing: 0,
-    position: { x: mmToDisplayPx(18), y: mmToDisplayPx(161) },
-    size: { width: mmToDisplayPx(174), height: mmToDisplayPx(14) },
+    position: { x: 0, y: 0 },
+    size: { width: CALENDAR_DATA_BLOCK_SIZE.width, height: mmToDisplayPx(14) },
     rotation: 0,
     opacity: 1,
-    zIndex: 4,
+    zIndex: 0,
     locked: false,
     visible: true,
   };
@@ -401,13 +422,13 @@ function createDateGridElement(year: number, month: CalendarMonth): TextElement 
     fontSize: 10,
     color: "#374151",
     fontWeight: "400",
-    textAlign: "left",
+    textAlign: "center",
     letterSpacing: 0,
-    position: { x: mmToDisplayPx(18), y: mmToDisplayPx(181) },
-    size: { width: mmToDisplayPx(174), height: mmToDisplayPx(44) },
+    position: { x: 0, y: mmToDisplayPx(20) },
+    size: { width: CALENDAR_DATA_BLOCK_SIZE.width, height: mmToDisplayPx(44) },
     rotation: 0,
     opacity: 1,
-    zIndex: 5,
+    zIndex: 1,
     locked: false,
     visible: true,
   };
@@ -427,8 +448,7 @@ export function createCalendarMonthPageElements(year: number, month: CalendarMon
 
   return [
     ...photoPlaceholders,
-    createMonthLabelElement(year, month),
-    createDateGridElement(year, month),
+    createCalendarDataGroupElement(year, month),
   ];
 }
 
@@ -604,7 +624,7 @@ function isCalendarBackgroundLayer(element: Element): boolean {
 }
 
 function isCalendarForegroundLayer(element: Element): boolean {
-  return element.role === "month-label" || element.role === "date-grid";
+  return element.role === "calendar-data" || element.role === "month-label" || element.role === "date-grid";
 }
 
 function getPlaceholderZIndexStart(elements: Element[]): number {

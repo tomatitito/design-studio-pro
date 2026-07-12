@@ -2,6 +2,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import App from "../App";
 import { useHistoryStore, useProjectStore, useUIStore } from "../stores";
+import type { CalendarElementRole, Element } from "../types";
+
+function findElementByRole(elements: Element[] | undefined, role: CalendarElementRole): Element | undefined {
+  for (const element of elements ?? []) {
+    if (element.role === role) return element;
+    if (element.elementType === "group") {
+      const child = findElementByRole(element.children, role);
+      if (child) return child;
+    }
+  }
+  return undefined;
+}
 
 const openProjectFromDialogMock = vi.hoisted(() => vi.fn());
 
@@ -190,10 +202,14 @@ describe("App", () => {
     });
     expect(project?.pages[1]?.elements).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", content: "Januar 2031" }),
-        expect.objectContaining({ role: "date-grid" }),
+        expect.objectContaining({ role: "calendar-data" }),
       ]),
     );
+    expect(findElementByRole(project?.pages[1]?.elements, "month-label")).toMatchObject({
+      role: "month-label",
+      content: "Januar 2031",
+    });
+    expect(findElementByRole(project?.pages[1]?.elements, "date-grid")).toMatchObject({ role: "date-grid" });
     expect(
       project?.pages[1]?.elements.filter((element) => element.role === "photo-placeholder"),
     ).toHaveLength(4);
@@ -204,10 +220,14 @@ describe("App", () => {
     });
     expect(project?.pages[12]?.elements).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", content: "Dezember 2031" }),
-        expect.objectContaining({ role: "date-grid" }),
+        expect.objectContaining({ role: "calendar-data" }),
       ]),
     );
+    expect(findElementByRole(project?.pages[12]?.elements, "month-label")).toMatchObject({
+      role: "month-label",
+      content: "Dezember 2031",
+    });
+    expect(findElementByRole(project?.pages[12]?.elements, "date-grid")).toMatchObject({ role: "date-grid" });
     expect(
       project?.pages[12]?.elements.filter((element) => element.role === "photo-placeholder"),
     ).toHaveLength(4);

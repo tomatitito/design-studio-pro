@@ -9,7 +9,18 @@ import {
   findPagePhotoPlaceholders,
 } from "../calendarContracts";
 import { CALENDAR_FONT_OPTIONS } from "../textStyles";
-import type { Project } from "../types";
+import type { CalendarElementRole, Element, Project } from "../types";
+
+function findElementByRole(elements: Element[] | undefined, role: CalendarElementRole): Element | undefined {
+  for (const element of elements ?? []) {
+    if (element.role === role) return element;
+    if (element.elementType === "group") {
+      const child = findElementByRole(element.children, role);
+      if (child) return child;
+    }
+  }
+  return undefined;
+}
 
 const TEST_PROJECT: Project = {
   id: "project-1",
@@ -164,10 +175,16 @@ describe("Sidebar calendar themes", () => {
         expect.objectContaining({ role: "photo-placeholder" }),
       ]),
     );
+    expect(findElementByRole(project?.pages[1].elements, "month-label")).toMatchObject({
+      role: "month-label",
+      color: "#1e3a8a",
+    });
+    expect(findElementByRole(project?.pages[1].elements, "date-grid")).toMatchObject({
+      role: "date-grid",
+      color: "#2563eb",
+    });
     expect(project?.pages[1].elements).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", color: "#1e3a8a" }),
-        expect.objectContaining({ role: "date-grid", color: "#2563eb" }),
         expect.objectContaining({ role: "photo-placeholder" }),
       ]),
     );
@@ -209,7 +226,7 @@ describe("Sidebar calendar photo layouts", () => {
     fireEvent.click(screen.getByTestId("calendar-photo-layout-two-columns"));
 
     const page = useProjectStore.getState().currentProject?.pages[0];
-    expect(page?.elements.some((element) => element.role === "date-grid")).toBe(true);
+    expect(findElementByRole(page?.elements, "date-grid")).toBeTruthy();
     expect(page ? findPagePhotoPlaceholders(page) : []).toHaveLength(2);
     expect(useProjectStore.getState().isDirty).toBe(true);
   });

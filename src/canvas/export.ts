@@ -7,6 +7,8 @@ import { getFabricDocumentElementId, getFabricImageSourcePath } from "./document
 import { resolveImageBorderStyle, type ImageBorderStyleId } from "./imageBorders";
 import { getActiveProjectPage, useProjectStore } from "../stores";
 import type {
+  Element,
+  GroupElement,
   ImageElement,
   Page,
   Project,
@@ -134,7 +136,7 @@ export function collectExportData(
   const sheetLeftEdge = sheet ? getObjectLeftEdge(sheet as FabricObject) : 0;
   const sheetTopEdge = sheet ? getObjectTopEdge(sheet as FabricObject) : 0;
 
-  const images: PdfImageElement[] = [];
+  const canvasImages: PdfImageElement[] = [];
 
   for (const obj of objects) {
     // Skip non-selectable helpers (page sheet, grid, etc.)
@@ -153,7 +155,7 @@ export function collectExportData(
     const elementId = getFabricDocumentElementId(obj as FabricObject);
     const border = resolvePdfImageBorder(imageElementsById.get(elementId));
 
-    images.push({
+    canvasImages.push({
       imagePath: originalPath,
       xMm: pxToMm(left),
       yMm: pxToMm(top),
@@ -164,10 +166,11 @@ export function collectExportData(
     });
   }
 
+  const images = currentPage ? collectImageElements(currentPage) : canvasImages;
   const texts = collectTextElements(currentPage);
 
   const shapes = collectShapeElements(currentPage);
-  const elements = collectRenderableElements(currentPage, images);
+  const elements = collectRenderableElements(currentPage);
 
   return {
     page: { widthMm: pageWidthMm, heightMm: pageHeightMm, background },
@@ -178,14 +181,44 @@ export function collectExportData(
   };
 }
 
-function mapTextElement(element: TextElement): PdfTextElement {
+interface ExportTransform {
+  offsetX: number;
+  offsetY: number;
+  rotationDeg: number;
+  opacity: number;
+}
+
+const IDENTITY_EXPORT_TRANSFORM: ExportTransform = {
+  offsetX: 0,
+  offsetY: 0,
+  rotationDeg: 0,
+  opacity: 1,
+};
+
+function childTransform(parent: ExportTransform, group: GroupElement): ExportTransform {
+  return {
+    offsetX: parent.offsetX + group.position.x,
+    offsetY: parent.offsetY + group.position.y,
+    rotationDeg: parent.rotationDeg + group.rotation,
+    opacity: parent.opacity * group.opacity,
+  };
+}
+
+function isVisibleForExport(element: Element, transform: ExportTransform): boolean {
+  return element.visible && transform.opacity * element.opacity > 0;
+}
+
+function mapTextElement(
+  element: TextElement,
+  transform: ExportTransform = IDENTITY_EXPORT_TRANSFORM,
+): PdfTextElement {
   return {
     content: element.content,
-    xMm: pxToMm(element.position.x),
-    yMm: pxToMm(element.position.y),
+    xMm: pxToMm(transform.offsetX + element.position.x),
+    yMm: pxToMm(transform.offsetY + element.position.y),
     widthMm: pxToMm(element.size.width),
     heightMm: pxToMm(element.size.height),
-    rotationDeg: element.rotation,
+    rotationDeg: transform.rotationDeg + element.rotation,
     fontFamily: element.fontFamily,
     fontSize: element.fontSize,
     color: element.color,
@@ -196,85 +229,108 @@ function mapTextElement(element: TextElement): PdfTextElement {
 }
 
 function collectTextElements(page: Page | null | undefined): PdfTextElement[] {
-  return (page?.elements ?? [])
-    .filter((element): element is TextElement => element.elementType === "text" && element.visible)
-    .sort((a, b) => a.zIndex - b.zIndex)
-    .map(mapTextElement);
+  return collectElementsInPaintOrder(page).flatMap(({ element, transform }) =>
+    element.elementType === "text" ? [mapTextElement(element, transform)] : [],
+  );
 }
 
-function mapShapeElement(element: ShapeElement): PdfShapeElement {
+function mapShapeElement(
+  element: ShapeElement,
+  transform: ExportTransform = IDENTITY_EXPORT_TRANSFORM,
+): PdfShapeElement {
   return {
     shapeKind: element.shapeKind,
-    xMm: pxToMm(element.position.x),
-    yMm: pxToMm(element.position.y),
+    xMm: pxToMm(transform.offsetX + element.position.x),
+    yMm: pxToMm(transform.offsetY + element.position.y),
     widthMm: pxToMm(element.size.width),
     heightMm: pxToMm(element.size.height),
-    rotationDeg: element.rotation,
+    rotationDeg: transform.rotationDeg + element.rotation,
     fill: element.fill,
     stroke: element.stroke,
     strokeWidth: pxToMm(element.strokeWidth),
-    opacity: element.opacity,
+    opacity: transform.opacity * element.opacity,
   };
 }
 
 function collectShapeElements(page: Page | null | undefined): PdfShapeElement[] {
-  return (page?.elements ?? [])
-    .filter(
-      (element): element is ShapeElement => element.elementType === "shape" && element.visible,
-    )
-    .sort((a, b) => a.zIndex - b.zIndex)
-    .map(mapShapeElement);
+  return collectElementsInPaintOrder(page).flatMap(({ element, transform }) =>
+    element.elementType === "shape" ? [mapShapeElement(element, transform)] : [],
+  );
 }
 
 function isExportableImageSource(src: string | undefined): src is string {
   return typeof src === "string" && src.trim().length > 0;
 }
 
-function mapImageElement(element: ImageElement): PdfImageElement {
+function mapImageElement(
+  element: ImageElement,
+  transform: ExportTransform = IDENTITY_EXPORT_TRANSFORM,
+): PdfImageElement {
   return {
     imagePath: element.src,
-    xMm: pxToMm(element.position.x),
-    yMm: pxToMm(element.position.y),
+    xMm: pxToMm(transform.offsetX + element.position.x),
+    yMm: pxToMm(transform.offsetY + element.position.y),
     widthMm: pxToMm(element.size.width),
     heightMm: pxToMm(element.size.height),
-    rotationDeg: element.rotation,
+    rotationDeg: transform.rotationDeg + element.rotation,
     ...resolvePdfImageBorder(element),
   };
 }
 
-function collectRenderableElements(
+function collectElementsInPaintOrder(
   page: Page | null | undefined,
-  canvasImages?: PdfImageElement[],
-): PdfRenderableElement[] {
-  let canvasImageIndex = 0;
-  return (page?.elements ?? [])
-    .filter((element) => element.visible)
-    .sort((a, b) => a.zIndex - b.zIndex)
-    .flatMap((element): PdfRenderableElement[] => {
+): Array<{ element: Element; transform: ExportTransform }> {
+  const flatten = (
+    elements: Element[],
+    transform: ExportTransform,
+  ): Array<{ element: Element; transform: ExportTransform }> =>
+    [...elements]
+      .sort((a, b) => a.zIndex - b.zIndex)
+      .flatMap((element): Array<{ element: Element; transform: ExportTransform }> => {
+        if (!isVisibleForExport(element, transform)) return [];
+
+        if (element.elementType === "group") {
+          // Groups are containers in the PDF export request. Children are exported at
+          // group position + child relative position, preserving the group's z-slot
+          // and child z-order. Group rotation is added to child rotation, but child
+          // coordinates and sizes are not rotated/scaled around the group bounds yet.
+          return flatten(element.children, childTransform(transform, element));
+        }
+
+        return [{ element, transform }];
+      });
+
+  return flatten(page?.elements ?? [], IDENTITY_EXPORT_TRANSFORM);
+}
+
+function collectImageElements(page: Page | null | undefined): PdfImageElement[] {
+  return collectElementsInPaintOrder(page).flatMap(({ element, transform }) => {
+    if (element.elementType !== "image" || !isExportableImageSource(element.src)) return [];
+    return [mapImageElement(element, transform)];
+  });
+}
+
+function collectRenderableElements(page: Page | null | undefined): PdfRenderableElement[] {
+  return collectElementsInPaintOrder(page).flatMap(
+    ({ element, transform }): PdfRenderableElement[] => {
       if (element.elementType === "image") {
         if (!isExportableImageSource(element.src)) return [];
-        const image = canvasImages?.[canvasImageIndex++] ?? mapImageElement(element);
-        return [{ elementType: "image", ...image }];
+        return [{ elementType: "image", ...mapImageElement(element, transform) }];
       }
       if (element.elementType === "text") {
-        return [{ elementType: "text", ...mapTextElement(element) }];
+        return [{ elementType: "text", ...mapTextElement(element, transform) }];
       }
       if (element.elementType === "shape") {
-        return [{ elementType: "shape", ...mapShapeElement(element) }];
+        return [{ elementType: "shape", ...mapShapeElement(element, transform) }];
       }
       return [];
-    });
+    },
+  );
 }
 
 function collectPageExportData(page: Page, project: Project): PdfPageExport {
   const unit = project.settings.unit;
-  const images = page.elements
-    .filter(
-      (element): element is ImageElement =>
-        element.elementType === "image" && element.visible && isExportableImageSource(element.src),
-    )
-    .sort((a, b) => a.zIndex - b.zIndex)
-    .map(mapImageElement);
+  const images = collectImageElements(page);
 
   const texts = collectTextElements(page);
   const shapes = collectShapeElements(page);

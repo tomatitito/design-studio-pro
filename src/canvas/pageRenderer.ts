@@ -1,13 +1,14 @@
-import { FabricImage, Rect, Textbox } from "fabric";
+import { FabricImage, Group, Rect, Textbox } from "fabric";
 import type { Canvas as FabricCanvas, FabricObject } from "fabric";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Element, ImageElement, Page, ShapeElement, TextElement } from "../types";
+import type { Element, GroupElement, ImageElement, Page, ShapeElement, TextElement } from "../types";
 import { getTextAlign, getTextFontWeight, getTextLetterSpacing } from "../textStyles";
 import { bindImageElementToFabricObject } from "./documentAdapter";
 import { setElementId } from "./handlers";
 
 const PAGE_SHEET_FLAG = "isPageSheet";
 const PAGE_CONTENT_FLAG = "isPageContent";
+const ZERO_ORIGIN = { left: 0, top: 0 };
 
 function isPageSheet(obj: FabricObject): boolean {
   return Boolean((obj as unknown as Record<string, unknown>)[PAGE_SHEET_FLAG]);
@@ -144,6 +145,53 @@ function createShapeObject(
   return shape as FabricObject;
 }
 
+function createGroupBoundsObject(element: GroupElement): FabricObject {
+  return new Rect({
+    left: 0,
+    top: 0,
+    width: element.size.width,
+    height: element.size.height,
+    originX: "left",
+    originY: "top",
+    fill: "rgba(0,0,0,0)",
+    strokeWidth: 0,
+    selectable: false,
+    evented: false,
+    excludeFromExport: true,
+  }) as FabricObject;
+}
+
+function makeGroupChildObject(obj: FabricObject): FabricObject {
+  obj.set({
+    selectable: false,
+    evented: false,
+  });
+  obj.setCoords();
+  return obj;
+}
+
+async function createGroupObject(
+  element: GroupElement,
+  origin: { left: number; top: number },
+): Promise<FabricObject> {
+  const children = [...element.children].sort((a, b) => a.zIndex - b.zIndex);
+  const childObjects: FabricObject[] = [createGroupBoundsObject(element)];
+
+  for (const child of children) {
+    const childObject = await createObjectForElement(child, ZERO_ORIGIN);
+    if (childObject) {
+      childObjects.push(makeGroupChildObject(childObject));
+    }
+  }
+
+  const group = new Group(childObjects, {
+    subTargetCheck: false,
+  });
+  applyBaseElementProps(group as FabricObject, element, origin);
+
+  return group as FabricObject;
+}
+
 async function createObjectForElement(
   element: Element,
   origin: { left: number; top: number },
@@ -155,10 +203,8 @@ async function createObjectForElement(
       return createTextObject(element, origin);
     case "shape":
       return createShapeObject(element, origin);
-    default:
-      // Rendering for groups is not implemented yet. Keep the switch exhaustive
-      // so page switching works without leaking stale objects.
-      return null;
+    case "group":
+      return createGroupObject(element, origin);
   }
 }
 

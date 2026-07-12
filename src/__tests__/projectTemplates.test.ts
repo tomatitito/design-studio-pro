@@ -2,9 +2,20 @@ import { describe, expect, it } from "vitest";
 import { createCalendarProject } from "../projectTemplates";
 import { findPagePhotoPlaceholders } from "../calendarContracts";
 import { formatGermanCalendarMonthGrid, generateGermanCalendarMonth, GERMAN_MONTH_NAMES } from "../calendarDates";
-import type { CalendarMonth } from "../types";
+import type { CalendarElementRole, CalendarMonth, Element } from "../types";
 
 const CALENDAR_MONTHS: CalendarMonth[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+function findElementByRole(elements: Element[], role: CalendarElementRole): Element | undefined {
+  for (const element of elements) {
+    if (element.role === role) return element;
+    if (element.elementType === "group") {
+      const child = findElementByRole(element.children, role);
+      if (child) return child;
+    }
+  }
+  return undefined;
+}
 
 describe("project templates", () => {
   it("creates calendar projects with a title page followed by January through December", () => {
@@ -32,13 +43,17 @@ describe("project templates", () => {
       expect(findPagePhotoPlaceholders(page)).toHaveLength(4);
       expect(page.elements).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ role: "month-label", content: `${monthName} 2031` }),
-          expect.objectContaining({
-            role: "date-grid",
-            content: formatGermanCalendarMonthGrid(generateGermanCalendarMonth(2031, month)),
-          }),
+          expect.objectContaining({ role: "calendar-data" }),
         ]),
       );
+      expect(findElementByRole(page.elements, "month-label")).toMatchObject({
+        role: "month-label",
+        content: `${monthName} 2031`,
+      });
+      expect(findElementByRole(page.elements, "date-grid")).toMatchObject({
+        role: "date-grid",
+        content: formatGermanCalendarMonthGrid(generateGermanCalendarMonth(2031, month)),
+      });
     });
   });
 });

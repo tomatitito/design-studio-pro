@@ -9,6 +9,7 @@ const CALENDAR_ELEMENT_ROLES = new Set([
   "photo-placeholder",
   "title-text",
   "subtitle-text",
+  "calendar-data",
   "month-label",
   "date-grid",
   "theme",

@@ -25,6 +25,7 @@ import {
   CALENDAR_THEME_PRESETS,
   DEFAULT_CALENDAR_THEME_ID,
 } from "../calendarContracts";
+import { findElementById, updateElementById } from "../elementTree";
 import type { Page, TextAlign, TextElement } from "../types";
 
 const PANELS: { id: Panel; label: string }[] = [
@@ -64,7 +65,7 @@ export function Sidebar() {
   }, [currentPage]);
   const selectedTextElement = useMemo<TextElement | null>(() => {
     if (!currentPage || selectedElementIds.length !== 1) return null;
-    const element = currentPage.elements.find((item) => item.id === selectedElementIds[0]);
+    const element = findElementById(currentPage.elements, selectedElementIds[0]);
     return element?.elementType === "text" ? element : null;
   }, [currentPage, selectedElementIds]);
   const calendarPhotoLayoutGroups = useMemo(
@@ -148,11 +149,10 @@ export function Sidebar() {
     >,
   ) => {
     if (!currentPage || !selectedTextElement) return;
-    const elements = currentPage.elements.map((element) =>
-      element.id === selectedTextElement.id && element.elementType === "text"
-        ? { ...element, ...patch }
-        : element,
+    const { elements, updated } = updateElementById(currentPage.elements, selectedTextElement.id, (element) =>
+      element.elementType === "text" ? { ...element, ...patch } : element,
     );
+    if (!updated) return;
 
     updatePage(currentPage.id, { elements });
     setDirty(true);

@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 import { mmToPx } from "../canvas/sheet";
 import { normalizeProjectElementCoordinates } from "../projectCoordinates";
 import { createCalendarProject } from "../projectTemplates";
-import type { Project } from "../types";
+import type { Element, Project } from "../types";
+
+function findElementById(elements: Element[], id: string): Element | undefined {
+  for (const element of elements) {
+    if (element.id === id) return element;
+    if (element.elementType === "group") {
+      const child = findElementById(element.children, id);
+      if (child) return child;
+    }
+  }
+  return undefined;
+}
 
 function makeProject(position = { x: 148.5, y: 300 }): Project {
   return {
@@ -89,7 +100,8 @@ describe("page-relative image coordinates", () => {
     const firstPlaceholder = january?.elements.find(
       (element) => element.id === "calendar-month-1-photo-1",
     );
-    const dateGrid = january?.elements.find((element) => element.id === "calendar-month-1-date-grid");
+    const calendarData = january?.elements.find((element) => element.id === "calendar-month-1-data");
+    const dateGrid = january ? findElementById(january.elements, "calendar-month-1-date-grid") : undefined;
 
     const normalized = normalizeProjectElementCoordinates(project);
     const normalizedJanuary = normalized.pages.find((page) => page.id === "calendar-month-1");
@@ -98,7 +110,10 @@ describe("page-relative image coordinates", () => {
     expect(normalizedJanuary?.elements.find((element) => element.id === firstPlaceholder?.id)?.position).toEqual(
       firstPlaceholder?.position,
     );
-    expect(normalizedJanuary?.elements.find((element) => element.id === dateGrid?.id)?.position).toEqual(
+    expect(normalizedJanuary?.elements.find((element) => element.id === calendarData?.id)?.position).toEqual(
+      calendarData?.position,
+    );
+    expect(normalizedJanuary ? findElementById(normalizedJanuary.elements, dateGrid?.id ?? "")?.position : undefined).toEqual(
       dateGrid?.position,
     );
   });

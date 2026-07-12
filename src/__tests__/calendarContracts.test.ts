@@ -16,7 +16,18 @@ import {
 import { collectProjectExportData } from "../canvas/export";
 import { mmToPx } from "../canvas/sheet";
 import { CALENDAR_HANDWRITING_FONT_STACK } from "../textStyles";
-import type { Element, Page, Project } from "../types";
+import type { CalendarElementRole, Element, Page, Project } from "../types";
+
+function findElementByRole(elements: Element[], role: CalendarElementRole): Element | undefined {
+  for (const element of elements) {
+    if (element.role === role) return element;
+    if (element.elementType === "group") {
+      const child = findElementByRole(element.children, role);
+      if (child) return child;
+    }
+  }
+  return undefined;
+}
 
 describe("calendar contracts", () => {
   it("creates title and month pages with persisted calendar roles", () => {
@@ -63,8 +74,26 @@ describe("calendar contracts", () => {
         expect.objectContaining({ id: "calendar-month-1-photo-2", role: "photo-placeholder" }),
         expect.objectContaining({ id: "calendar-month-1-photo-3", role: "photo-placeholder" }),
         expect.objectContaining({ id: "calendar-month-1-photo-4", role: "photo-placeholder" }),
-        expect.objectContaining({ id: "calendar-month-1-label", role: "month-label", content: "Januar 2031" }),
-        expect.objectContaining({ id: "calendar-month-1-date-grid", role: "date-grid" }),
+        expect.objectContaining({
+          id: "calendar-month-1-data",
+          role: "calendar-data",
+          position: { x: mmToPx(18), y: mmToPx(161) },
+          size: { width: mmToPx(174), height: mmToPx(64) },
+          children: expect.arrayContaining([
+            expect.objectContaining({
+              id: "calendar-month-1-label",
+              role: "month-label",
+              content: "Januar 2031",
+              position: { x: 0, y: 0 },
+            }),
+            expect.objectContaining({
+              id: "calendar-month-1-date-grid",
+              role: "date-grid",
+              textAlign: "center",
+              position: { x: 0, y: mmToPx(20) },
+            }),
+          ]),
+        }),
       ]),
     );
   });
@@ -100,7 +129,7 @@ describe("calendar contracts", () => {
   it("creates January with four editable photo placeholders in a 2x2 layout", () => {
     const elements = createCalendarMonthPageElements(2024, 1);
     const placeholders = elements.filter((element) => element.role === "photo-placeholder");
-    const dateGrid = elements.find((element) => element.role === "date-grid");
+    const dateGrid = findElementByRole(elements, "date-grid");
 
     expect(placeholders).toHaveLength(4);
     expect(placeholders).toEqual([
@@ -201,6 +230,7 @@ describe("calendar contracts", () => {
       "photo-placeholder",
       "title-text",
       "subtitle-text",
+      "calendar-data",
       "month-label",
       "date-grid",
       "theme",
@@ -293,10 +323,17 @@ describe("calendar contracts", () => {
         expect.objectContaining({ role: "photo-placeholder", src: "/photos/title.jpg", assetId: "title-asset" }),
       ]),
     );
+    expect(findElementByRole(themedMonth.elements, "month-label")).toMatchObject({
+      role: "month-label",
+      content: "Januar 2031",
+      color: preset?.tokens.monthLabel,
+    });
+    expect(findElementByRole(themedMonth.elements, "date-grid")).toMatchObject({
+      role: "date-grid",
+      color: preset?.tokens.dateGrid,
+    });
     expect(themedMonth.elements).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", content: "Januar 2031", color: preset?.tokens.monthLabel }),
-        expect.objectContaining({ role: "date-grid", color: preset?.tokens.dateGrid }),
         expect.objectContaining({ role: "photo-placeholder", src: "/photos/january.jpg", assetId: "january-asset" }),
       ]),
     );
@@ -325,12 +362,11 @@ describe("calendar contracts", () => {
       size: { width: mmToPx(105), height: mmToPx(126) },
     });
     expect(placeholders[1]).toMatchObject({ id: "calendar-month-1-photo-2", src: "/photos/two.jpg" });
-    expect(updated.elements).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", content: "Januar 2031" }),
-        expect.objectContaining({ role: "date-grid" }),
-      ]),
-    );
+    expect(findElementByRole(updated.elements, "month-label")).toMatchObject({
+      role: "month-label",
+      content: "Januar 2031",
+    });
+    expect(findElementByRole(updated.elements, "date-grid")).toMatchObject({ role: "date-grid" });
   });
 
   it("keeps applied layout placeholders above preserved theme layers", () => {
@@ -357,20 +393,16 @@ describe("calendar contracts", () => {
 
     const updated = applyCalendarPhotoLayoutPreset(page, "one-full");
     const updatedTheme = updated.elements.find((element) => element.id === "month-theme");
-    const monthLabel = updated.elements.find((element) => element.role === "month-label");
-    const dateGrid = updated.elements.find((element) => element.role === "date-grid");
+    const calendarData = updated.elements.find((element) => element.role === "calendar-data");
+    const monthLabel = findElementByRole(updated.elements, "month-label");
+    const dateGrid = findElementByRole(updated.elements, "date-grid");
     const [placeholder] = findPagePhotoPlaceholders(updated);
 
     expect(updatedTheme).toMatchObject({ role: "theme", zIndex: 0 });
     expect(placeholder?.zIndex).toBeGreaterThan(updatedTheme?.zIndex ?? Number.MAX_SAFE_INTEGER);
-    expect(monthLabel?.zIndex).toBeGreaterThan(placeholder?.zIndex ?? Number.MAX_SAFE_INTEGER);
-    expect(dateGrid?.zIndex).toBeGreaterThan(placeholder?.zIndex ?? Number.MAX_SAFE_INTEGER);
-    expect(updated.elements).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "month-label", content: "Januar 2031" }),
-        expect.objectContaining({ role: "date-grid" }),
-      ]),
-    );
+    expect(calendarData?.zIndex).toBeGreaterThan(placeholder?.zIndex ?? Number.MAX_SAFE_INTEGER);
+    expect(monthLabel).toMatchObject({ role: "month-label", content: "Januar 2031" });
+    expect(dateGrid).toMatchObject({ role: "date-grid" });
   });
 
   it("removes nested photo placeholders by role when applying a calendar layout preset", () => {

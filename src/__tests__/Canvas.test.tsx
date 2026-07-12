@@ -12,6 +12,7 @@ import type { Project } from "../types";
 const fabricMock = vi.hoisted(() => {
   const canvasInstances: MockCanvas[] = [];
   const rectInstances: MockRect[] = [];
+  const groupInstances: MockGroup[] = [];
 
   function originOffset(origin: unknown, size: number): number {
     if (origin === "left" || origin === "top") return 0;
@@ -56,6 +57,9 @@ const fabricMock = vi.hoisted(() => {
       this.viewportTransform = [...vpt];
     });
     add = vi.fn((obj: unknown) => {
+      if (obj && typeof obj === "object") {
+        (obj as { canvas?: MockCanvas }).canvas = this;
+      }
       this.objects.push(obj);
     });
     remove = vi.fn();
@@ -129,6 +133,42 @@ const fabricMock = vi.hoisted(() => {
     }
   }
 
+  class MockGroup {
+    type = "group";
+    objects: unknown[];
+    left?: number;
+    top?: number;
+    width?: number;
+    height?: number;
+    scaleX = 1;
+    scaleY = 1;
+    originX = "center";
+    originY = "center";
+    elementId = "";
+    selectable?: boolean;
+    evented?: boolean;
+    subTargetCheck?: boolean;
+    set = vi.fn((update: Record<string, unknown>) => {
+      Object.assign(this, update);
+    });
+    setCoords = vi.fn();
+    getObjects = vi.fn(() => this.objects);
+    getBoundingRect = vi.fn(() => getOriginAwareBoundingRect(this));
+
+    constructor(objects: unknown[] = [], opts: Record<string, unknown> = {}) {
+      this.objects = objects;
+      Object.assign(this, opts);
+      this.width = this.width ?? 0;
+      this.height = this.height ?? 0;
+      for (const obj of objects) {
+        const bounds = getOriginAwareBoundingRect(obj as Parameters<typeof getOriginAwareBoundingRect>[0]);
+        this.width = Math.max(this.width ?? 0, bounds.left + bounds.width);
+        this.height = Math.max(this.height ?? 0, bounds.top + bounds.height);
+      }
+      groupInstances.push(this);
+    }
+  }
+
   class MockTextbox {
     type = "textbox";
     text: string;
@@ -177,7 +217,7 @@ const fabricMock = vi.hoisted(() => {
     return image;
   });
 
-  return { canvasInstances, rectInstances, MockCanvas, MockRect, MockTextbox, fabricImageFromURL };
+  return { canvasInstances, rectInstances, groupInstances, MockCanvas, MockRect, MockGroup, MockTextbox, fabricImageFromURL };
 });
 
 vi.mock("fabric", () => ({
@@ -194,6 +234,7 @@ vi.mock("fabric", () => ({
     }
   },
   FabricImage: { fromURL: fabricMock.fabricImageFromURL },
+  Group: fabricMock.MockGroup,
   Textbox: fabricMock.MockTextbox,
   ActiveSelection: vi.fn(),
   Point: class {
@@ -240,6 +281,7 @@ describe("Canvas", () => {
   beforeEach(() => {
     fabricMock.canvasInstances.length = 0;
     fabricMock.rectInstances.length = 0;
+    fabricMock.groupInstances.length = 0;
     fabricMock.fabricImageFromURL.mockClear();
 
     vi.stubGlobal(
@@ -486,7 +528,7 @@ describe("Canvas", () => {
       ).toBe(true);
       expect(
         canvas.objects.some(
-          (obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-date-grid",
+          (obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-data",
         ),
       ).toBe(true);
     });
@@ -497,9 +539,17 @@ describe("Canvas", () => {
       originX?: string;
       originY?: string;
       getBoundingRect: () => { left: number; top: number; width: number; height: number };
+      getObjects?: () => RenderedObject[];
     };
-    const getRenderedObject = (id: string) =>
-      canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === id) as RenderedObject;
+    const findObjectById = (objects: unknown[], id: string): RenderedObject | undefined => {
+      for (const obj of objects as RenderedObject[]) {
+        if ((obj as { elementId?: string }).elementId === id) return obj;
+        const child = obj.getObjects ? findObjectById(obj.getObjects(), id) : undefined;
+        if (child) return child;
+      }
+      return undefined;
+    };
+    const getRenderedObject = (id: string) => findObjectById(canvas.objects, id) as RenderedObject;
     const expectTopLeftOriginAt = (obj: RenderedObject, x: number, y: number) => {
       expect(obj.originX).toBe("left");
       expect(obj.originY).toBe("top");
@@ -512,11 +562,13 @@ describe("Canvas", () => {
 
     const image = getRenderedObject("calendar-month-1-photo-1");
     const placeholder = getRenderedObject("calendar-month-1-photo-2");
+    const calendarData = getRenderedObject("calendar-month-1-data");
     const dateGrid = getRenderedObject("calendar-month-1-date-grid");
 
     expectTopLeftOriginAt(image, (sheet.left ?? 0) + mmToPx(18), (sheet.top ?? 0) + mmToPx(20));
     expectTopLeftOriginAt(placeholder, (sheet.left ?? 0) + mmToPx(109), (sheet.top ?? 0) + mmToPx(20));
-    expectTopLeftOriginAt(dateGrid, (sheet.left ?? 0) + mmToPx(18), (sheet.top ?? 0) + mmToPx(181));
+    expectTopLeftOriginAt(calendarData, (sheet.left ?? 0) + mmToPx(18), (sheet.top ?? 0) + mmToPx(161));
+    expectTopLeftOriginAt(dateGrid, 0, mmToPx(20));
 
     const positionsBefore = project.pages
       .find((page) => page.id === "calendar-month-1")
@@ -533,6 +585,304 @@ describe("Canvas", () => {
         .currentProject?.pages.find((page) => page.id === "calendar-month-1")
         ?.elements.map((element) => ({ id: element.id, position: element.position })),
     ).toEqual(positionsBefore);
+  });
+
+  it("renders group elements as one selectable Fabric group with group-relative children", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          elements: [
+            {
+              id: "group-1",
+              elementType: "group",
+              position: { x: 50, y: 60 },
+              size: { width: 120, height: 90 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+              children: [
+                {
+                  id: "child-shape",
+                  elementType: "shape",
+                  shapeKind: "rectangle",
+                  fill: "#ff0000",
+                  stroke: "#000000",
+                  strokeWidth: 0,
+                  position: { x: 10, y: 20 },
+                  size: { width: 30, height: 40 },
+                  rotation: 0,
+                  opacity: 1,
+                  zIndex: 0,
+                  locked: false,
+                  visible: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "page-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "group-1")).toBe(true);
+    });
+
+    const group = canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === "group-1") as {
+      type: string;
+      left: number;
+      top: number;
+      selectable: boolean;
+      evented: boolean;
+      getObjects: () => Array<{ elementId?: string; left?: number; top?: number; selectable?: boolean; evented?: boolean }>;
+    };
+    expect(group.type).toBe("group");
+    expect(group.left).toBeCloseTo((sheet.left ?? 0) + 50);
+    expect(group.top).toBeCloseTo((sheet.top ?? 0) + 60);
+    expect(group.selectable).toBe(true);
+    expect(group.evented).toBe(true);
+    expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "child-shape")).toBe(false);
+
+    const child = group.getObjects().find((obj) => obj.elementId === "child-shape");
+    expect(child).toMatchObject({
+      left: 10,
+      top: 20,
+      selectable: false,
+      evented: false,
+    });
+  });
+
+  it("persists moved Fabric group geometry to the GroupElement", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          elements: [
+            {
+              id: "group-1",
+              elementType: "group",
+              position: { x: 50, y: 60 },
+              size: { width: 120, height: 90 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+              children: [
+                {
+                  id: "child-shape",
+                  elementType: "shape",
+                  shapeKind: "rectangle",
+                  fill: "#ff0000",
+                  stroke: "#000000",
+                  strokeWidth: 0,
+                  position: { x: 10, y: 20 },
+                  size: { width: 30, height: 40 },
+                  rotation: 0,
+                  opacity: 1,
+                  zIndex: 0,
+                  locked: false,
+                  visible: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "page-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "group-1")).toBe(true);
+    });
+
+    const group = canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === "group-1") as {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      angle?: number;
+    };
+
+    act(() => {
+      group.left = (sheet.left ?? 0) + 80;
+      group.top = (sheet.top ?? 0) + 95;
+      group.scaleX = 1.5;
+      group.scaleY = 2;
+      group.angle = 15;
+      canvas.emit("object:modified", { target: group });
+    });
+
+    const updatedGroup = useProjectStore
+      .getState()
+      .currentProject?.pages[0].elements.find((element) => element.id === "group-1");
+    expect(updatedGroup?.elementType).toBe("group");
+    if (updatedGroup?.elementType === "group") {
+      expect(updatedGroup.position).toEqual({ x: 80, y: 95 });
+      expect(updatedGroup.size).toEqual({ width: 180, height: 180 });
+      expect(updatedGroup.rotation).toBe(15);
+      expect(updatedGroup.children[0]).toMatchObject({ id: "child-shape", position: { x: 10, y: 20 } });
+    }
+    expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+
+  it("persists moved calendar-data group geometry without rewriting grouped date children", async () => {
+    const project = createCalendarProject(2031, "2026-01-01T00:00:00Z");
+    useProjectStore.setState({ currentProject: project, activePageId: "calendar-month-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    const sheet = fabricMock.rectInstances[0];
+
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-data")).toBe(true);
+    });
+
+    const group = canvas.objects.find((obj) => (obj as { elementId?: string }).elementId === "calendar-month-1-data") as {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      scaleX: number;
+      scaleY: number;
+      angle?: number;
+    };
+
+    act(() => {
+      group.left = (sheet.left ?? 0) + 12;
+      group.top = (sheet.top ?? 0) + 24;
+      group.angle = 4;
+      canvas.emit("object:modified", { target: group });
+    });
+
+    const updatedGroup = useProjectStore
+      .getState()
+      .currentProject?.pages.find((page) => page.id === "calendar-month-1")
+      ?.elements.find((element) => element.id === "calendar-month-1-data");
+
+    expect(updatedGroup?.elementType).toBe("group");
+    if (updatedGroup?.elementType === "group") {
+      expect(updatedGroup.position).toEqual({ x: 12, y: 24 });
+      expect(updatedGroup.rotation).toBe(4);
+      expect(updatedGroup.children).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "calendar-month-1-label", position: { x: 0, y: 0 } }),
+          expect.objectContaining({ id: "calendar-month-1-date-grid", position: { x: 0, y: mmToPx(20) } }),
+        ]),
+      );
+    }
+    expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+
+  it("persists modified nested group children by id", async () => {
+    const project: Project = {
+      ...structuredClone(TEST_PROJECT),
+      pages: [
+        {
+          ...structuredClone(TEST_PROJECT.pages[0]),
+          elements: [
+            {
+              id: "group-1",
+              elementType: "group",
+              position: { x: 50, y: 60 },
+              size: { width: 120, height: 90 },
+              rotation: 0,
+              opacity: 1,
+              zIndex: 0,
+              locked: false,
+              visible: true,
+              children: [
+                {
+                  id: "child-shape",
+                  elementType: "shape",
+                  shapeKind: "rectangle",
+                  fill: "#ff0000",
+                  stroke: "#000000",
+                  strokeWidth: 0,
+                  position: { x: 10, y: 20 },
+                  size: { width: 30, height: 40 },
+                  rotation: 0,
+                  opacity: 1,
+                  zIndex: 0,
+                  locked: false,
+                  visible: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    useProjectStore.setState({ currentProject: project, activePageId: "page-1" });
+
+    render(
+      <CanvasProvider>
+        <Canvas />
+      </CanvasProvider>,
+    );
+
+    const canvas = fabricMock.canvasInstances[0];
+    await waitFor(() => {
+      expect(canvas.objects.some((obj) => (obj as { elementId?: string }).elementId === "group-1")).toBe(true);
+    });
+
+    act(() => {
+      canvas.emit("object:modified", {
+        target: {
+          elementId: "child-shape",
+          left: 25,
+          top: 35,
+          width: 45,
+          height: 55,
+          scaleX: 1,
+          scaleY: 1,
+          angle: 5,
+        },
+      });
+    });
+
+    const updatedGroup = useProjectStore
+      .getState()
+      .currentProject?.pages[0].elements.find((element) => element.id === "group-1");
+    expect(updatedGroup?.elementType).toBe("group");
+    if (updatedGroup?.elementType === "group") {
+      expect(updatedGroup.children[0]).toMatchObject({
+        id: "child-shape",
+        position: { x: 25, y: 35 },
+        size: { width: 45, height: 55 },
+        rotation: 5,
+      });
+    }
   });
 
   it("renders text elements and persists text edits from Fabric", async () => {

@@ -118,10 +118,13 @@ export function collectTargetImageIds(
   selectedIds: string[],
 ): string[] {
   const selected = new Set(selectedIds);
-  return elements
-    .filter((element): element is ImageElement => element.elementType === "image")
-    .filter((element) => shouldUpdateImageBorder(element, mode, selected))
-    .map((element) => element.id);
+  return elements.flatMap((element) => {
+    if (element.elementType === "group") {
+      return collectTargetImageIds(element.children, mode, selectedIds);
+    }
+    if (element.elementType !== "image") return [];
+    return shouldUpdateImageBorder(element, mode, selected) ? [element.id] : [];
+  });
 }
 
 export function applyBorderToImageElements(
@@ -136,6 +139,9 @@ export function applyBorderToImageElements(
   );
 
   return elements.map((element) => {
+    if (element.elementType === "group") {
+      return { ...element, children: applyBorderToImageElements(element.children, input) };
+    }
     if (element.elementType !== "image") return element;
     if (!shouldUpdateImageBorder(element, input.mode, selected)) return element;
 
