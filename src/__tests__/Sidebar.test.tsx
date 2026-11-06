@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Sidebar } from "../components/Sidebar";
 import { CanvasProvider } from "../components/CanvasContext";
-import { useProjectStore, useUIStore } from "../stores";
+import { useHistoryStore, useProjectStore, useUIStore } from "../stores";
+import { restoreDocument, type DocumentSnapshot } from "../documentHistory";
 import {
   createCalendarMonthPage,
   createCalendarTitlePage,
@@ -211,6 +212,32 @@ describe("Sidebar calendar themes", () => {
       ]),
     );
     expect(useProjectStore.getState().isDirty).toBe(true);
+  });
+});
+
+describe("Bundled theme history", () => {
+  it("keeps one chooser and undoes the entire theme application", () => {
+    useProjectStore.getState().setCurrentProject({
+      ...structuredClone(TEST_PROJECT), projectType: "calendar",
+      calendar: { year: 2031, locale: "de-DE", themeId: "classic" },
+      pages: [
+        createCalendarTitlePage({ id: "title", year: 2031 }),
+        createCalendarMonthPage(1, { id: "month-1", year: 2031 }),
+      ],
+    });
+    useUIStore.getState().setActivePanel("properties");
+    renderSidebar();
+    expect(screen.getAllByText("Calendar Theme")).toHaveLength(1);
+    useHistoryStore.getState().clear();
+    const before = structuredClone(useProjectStore.getState().currentProject);
+    fireEvent.click(screen.getByTestId("calendar-theme-ocean"));
+    expect(useHistoryStore.getState().past).toHaveLength(1);
+    act(() => {
+      useHistoryStore.getState().undo();
+      restoreDocument(useHistoryStore.getState().present as DocumentSnapshot);
+    });
+    expect(useProjectStore.getState().currentProject).toEqual(before);
+    expect(screen.getAllByTestId("background-color-input")).toHaveLength(1);
   });
 });
 

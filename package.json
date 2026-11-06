@@ -15,6 +15,9 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
+    "extension:build": "node scripts/extension.mjs build",
+    "extension:validate": "node scripts/extension.mjs validate",
+    "extension:install": "node scripts/extension.mjs install",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,html}\""
   },

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mmToPx } from "../canvas/sheet";
 import { Canvas } from "../components/Canvas";
 import { CanvasProvider } from "../components/CanvasContext";
-import { useProjectStore, useUIStore } from "../stores";
+import { useHistoryStore, useProjectStore, useUIStore } from "../stores";
+import { editor } from "../extensions/editor";
+import { restoreDocument, type DocumentSnapshot } from "../documentHistory";
 import { replacePagePhotoPlaceholder } from "../calendarContracts";
 import { createCalendarProject } from "../projectTemplates";
 import { CALENDAR_HANDWRITING_FONT_STACK } from "../textStyles";
@@ -351,6 +353,22 @@ describe("Canvas", () => {
 
     expect(canvas.zoomToPoint).not.toHaveBeenCalled();
     expect(canvas.setViewportTransform).not.toHaveBeenCalled();
+  });
+
+  it("synchronizes Editor API edits and undo to the Fabric page sheet", async () => {
+    render(<CanvasProvider><Canvas /></CanvasProvider>);
+    useHistoryStore.getState().clear();
+    const sheet = fabricMock.rectInstances[0];
+    act(() => editor.edit({
+      projectId: "project-1",
+      operations: [{ type: "page.background", pageId: "page-1", color: "#123456" }],
+    }));
+    await waitFor(() => expect(sheet.fill).toBe("#123456"));
+    act(() => {
+      useHistoryStore.getState().undo();
+      restoreDocument(useHistoryStore.getState().present as DocumentSnapshot);
+    });
+    await waitFor(() => expect(sheet.fill).toBe("#ffffff"));
   });
 
   it("refits the viewport when opening a different project with the same page size", async () => {

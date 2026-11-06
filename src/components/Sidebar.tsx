@@ -12,6 +12,7 @@ import {
 import { selectActivePage, useProjectStore, useUIStore, type Panel } from "../stores";
 import { useCanvasStore } from "./CanvasContext";
 import { AssetLibrary } from "./AssetLibrary";
+import { PropsExtensions } from "../extensions/PropsExtensions";
 import {
   CALENDAR_FONT_OPTIONS,
   getTextAlign,
@@ -20,10 +21,7 @@ import {
 } from "../textStyles";
 import {
   applyCalendarPhotoLayoutPreset,
-  applyCalendarThemeToProject,
   CALENDAR_PHOTO_LAYOUT_PRESETS,
-  CALENDAR_THEME_PRESETS,
-  DEFAULT_CALENDAR_THEME_ID,
 } from "../calendarContracts";
 import { findElementById, updateElementById } from "../elementTree";
 import { getOrderedUnits, getPhysicalPages } from "../spreads";
@@ -45,7 +43,6 @@ export function Sidebar() {
   const activePageId = useProjectStore((s) => s.activePageId);
   const selectedElementIds = useUIStore((s) => s.selectedElementIds);
   const setActivePage = useProjectStore((s) => s.setActivePage);
-  const setCurrentProject = useProjectStore((s) => s.setCurrentProject);
   const addPage = useProjectStore((s) => s.addPage);
   const updatePage = useProjectStore((s) => s.updatePage);
   const insertSpreadAfter = useProjectStore((s) => s.insertSpreadAfter);
@@ -88,20 +85,10 @@ export function Sidebar() {
     currentProject?.projectType === "calendar" && currentPage?.role === "month";
   const showCalendarTitleLayoutHelp =
     currentProject?.projectType === "calendar" && currentPage?.role === "title";
-  const showCalendarThemes = currentProject?.projectType === "calendar";
-  const activeCalendarThemeId = currentProject?.calendar?.themeId ?? DEFAULT_CALENDAR_THEME_ID;
 
   const applyBackground = (backgroundColor: string) => {
     if (!currentPage) return;
     updatePage(currentPage.id, { backgroundColor });
-    setDirty(true);
-  };
-
-  const applyCalendarTheme = (themeId: string) => {
-    if (!currentProject) return;
-    const themedProject = applyCalendarThemeToProject(currentProject, themeId);
-    if (themedProject === currentProject) return;
-    setCurrentProject(themedProject);
     setDirty(true);
   };
 
@@ -419,44 +406,7 @@ export function Sidebar() {
               </div>
             </div>
 
-            {showCalendarThemes && (
-              <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
-                  Calendar Theme
-                </div>
-                <div className="grid grid-cols-2 gap-2 rounded-md border border-neutral-700 bg-neutral-900/60 p-3">
-                  {CALENDAR_THEME_PRESETS.map((preset) => {
-                    const isActive = activeCalendarThemeId === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyCalendarTheme(preset.id)}
-                        className={`rounded border p-2 text-left transition ${
-                          isActive
-                            ? "border-blue-400 bg-blue-500/15"
-                            : "border-neutral-700 bg-neutral-800 hover:border-blue-400"
-                        }`}
-                        data-testid={`calendar-theme-${preset.id}`}
-                      >
-                        <div className="mb-2 flex overflow-hidden rounded border border-white/10">
-                          {preset.swatches.map((color) => (
-                            <span
-                              key={color}
-                              className="h-5 flex-1"
-                              style={{ backgroundColor: color }}
-                            />
-                          ))}
-                        </div>
-                        <span className="block text-[11px] font-medium text-white">
-                          {preset.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <PropsExtensions />
 
             {showCalendarTitleLayoutHelp && (
               <div

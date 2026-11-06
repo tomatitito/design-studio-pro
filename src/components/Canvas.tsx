@@ -5,7 +5,6 @@ import { useCanvasStore, useCanvasStoreApi } from "./CanvasContext";
 import {
   attachCanvasHandlers,
   attachZoomPanHandlers,
-  attachHistoryTracking,
   attachUndoRedoShortcuts,
   attachKeyboardShortcuts,
   attachSmartGuides,
@@ -113,7 +112,6 @@ export function Canvas() {
 
     const detachHandlers = attachCanvasHandlers(fabricCanvas);
     const detachZoomPan = attachZoomPanHandlers(fabricCanvas, sheetRef);
-    const detachHistory = attachHistoryTracking(fabricCanvas);
     const detachUndoRedoShortcuts = attachUndoRedoShortcuts();
     const detachKeyboardShortcuts = attachKeyboardShortcuts(fabricCanvas);
     const detachSmartGuides = attachSmartGuides(fabricCanvas);
@@ -150,7 +148,6 @@ export function Canvas() {
     return () => {
       detachHandlers();
       detachZoomPan();
-      detachHistory();
       detachUndoRedoShortcuts();
       detachKeyboardShortcuts();
       detachSmartGuides();

@@ -10,6 +10,78 @@
 - `src/` — React frontend
 - `docs/` — Documentation
 
+## Public Props extensions (API v1)
+
+Add new Props functionality as an external TypeScript/React package, **not by
+editing Sidebar, importing Zustand, or reaching into Fabric**. No agent or
+terminal is embedded in DSP. The SDK contract is `src/extensions/sdk.ts`; the
+complete lifecycle, limitations, and native smoke test are in
+[docs/extensions.md](docs/extensions.md).
+
+Working authoring workflow from this repository's root:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm extension:build extensions/selection-tools
+pnpm extension:validate extensions/selection-tools
+```
+
+In the running desktop app open **Props → Extensions → Load package folder…**,
+choose `extensions/selection-tools/dist`, inspect the identity/path and explicitly
+approve trust. Select text or shapes on a single page and use **Apply to
+selection**. Building/installing/loading alone must not edit the document.
+For discovery, copy/install the build under the Extensions directory displayed
+in that panel:
+
+```sh
+pnpm extension:install extensions/selection-tools "/absolute/Extensions-directory-shown-in-Props"
+```
+
+Then **Refresh packages → Trust & load/reload**. Rebuild and explicitly reload
+after changes; no app rebuild or dev server is required. `extension:validate`
+checks artifacts statically, not whether arbitrary executable code is safe.
+The install command writes to the supplied destination; do not run it outside
+an attached worktree without the user's authorization.
+
+To author another package, copy `extensions/selection-tools` to
+`extensions/<your-package>`, change the manifest `id`/`name`, and change section
+IDs to match. Keep `apiVersion: 1`, `entry: "extension.js"`, `src/index.tsx`,
+and the template `tsconfig.json`. Manifest versions are `x.y.z`. Export
+`activate(api: ExtensionAPI)`, take React from `api.React`, and call
+`api.props.registerSection({ id: "your.package/local-id", title, order, component })`.
+Register during activation; return a cleanup function. Do not import/bundle
+React or use automatic JSX runtime imports; the supported builder supplies
+classic JSX with the host's `React`. Use inline styles for new extension styles.
+
+Public Editor contract (`api.editor`, also passed to every section):
+
+- `getSnapshot()` returns detached readonly project, active physical page, and
+  selection IDs. Null project/page is normal. Do not mutate snapshots.
+- `subscribe(listener)` observes document/page/selection changes and returns an
+  unsubscribe function. Use React state + effect as in the executable example.
+  Do not use `getSnapshot()` directly as a `useSyncExternalStore` snapshot:
+  snapshots are detached fresh values, not referentially cached.
+- `edit({ projectId, operations })` validates and atomically applies 1–1000
+  operations: `page.background` (`pageId`, `color`), `text.content`
+  (`pageId`, `elementId`, `content`), or `element.color` (`pageId`, `elementId`,
+  `color`, for text/shape fill). Colors must be `#rrggbb`. Element edits support
+  single pages only in v1, including nested groups; locked ancestors/elements
+  are rejected. Spread background edits work per physical page. Unsupported or
+  stale targets throw with no partial writes. Apply only on explicit user action.
+- Host owns validation, document-level undo/redo, dirty tracking, and existing
+  reactive canvas synchronization. One batch is one undo step; no-op batches
+  add none. No raw store or live canvas is public. New edit capabilities require
+  a reviewed SDK change, not internal imports by extensions.
+
+**Security/recovery:** plugins execute trusted, unsandboxed same-webview JS with
+the app's privileges. Explicit trust is required on every load/reload. External
+plugins never auto-load on startup, so restarting recovers with them disabled;
+there is also **Disable external extensions**. Failed import/activation/
+registration keeps the last working registrations. Arbitrary module side
+effects cannot be rolled back. See the detailed docs before extending the host.
+The bundled Calendar Theme section retains the existing core theme adapter and
+ordinary saved document colors; it does not require external packages.
+
 ## CLI
 
 Build the CLI binary:

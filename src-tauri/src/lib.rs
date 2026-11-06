@@ -5,6 +5,8 @@ pub mod error;
 pub mod models;
 pub mod updater;
 pub mod utils;
+#[cfg(feature = "extension-smoke")]
+mod extension_smoke;
 
 #[cfg(desktop)]
 const CHECK_FOR_UPDATES_MENU_ID: &str = "check_for_updates";
@@ -15,8 +17,12 @@ pub fn run() {
     env_logger::init();
     log::info!("Design Studio Pro starting...");
 
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default();
+    #[cfg(not(feature = "extension-smoke"))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    #[cfg(feature = "extension-smoke")]
+    let builder = builder.plugin(extension_smoke::dialog_plugin());
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .manage(commands::ProjectStore::new())
         .manage(commands::CanvasStore::new())
@@ -56,12 +62,30 @@ pub fn run() {
             commands::assets::delete_asset,
             commands::assets::generate_thumbnail,
             // Filesystem commands
+            commands::filesystem::extensions_directory,
             commands::filesystem::read_text_file,
             commands::filesystem::write_text_file,
             commands::filesystem::create_directory,
             commands::filesystem::list_directory,
             // PDF commands
             commands::pdf::export_pdf,
+        ]);
+
+    #[cfg(feature = "extension-smoke")]
+    let builder = builder
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                webview.eval(extension_smoke::script()).expect("inject smoke test");
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            extension_smoke::extension_smoke_result,
+            extension_smoke::extension_smoke_set_trust,
+            commands::log_zustand,
+            commands::filesystem::extensions_directory,
+            commands::filesystem::read_text_file,
+            commands::filesystem::write_text_file,
+            commands::filesystem::list_directory,
         ]);
 
     builder

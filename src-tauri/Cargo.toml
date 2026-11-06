@@ -39,6 +39,7 @@ tempfile = "3"
 
 [features]
 cli = ["clap"]
+extension-smoke = []
 
 [[bin]]
 name = "cli"

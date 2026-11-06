@@ -1,6 +1,15 @@
 //! File system operation commands.
 
 use std::fs;
+use tauri::Manager;
+
+/// Package discovery only. Executable code is read and trusted explicitly in the UI.
+#[tauri::command]
+pub fn extensions_directory(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app.path().app_data_dir().map_err(|error| error.to_string())?.join("extensions");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
 
 /// Reads a text file and returns its contents.
 #[tauri::command]

@@ -10,7 +10,7 @@ export {
 export { attachZoomPanHandlers } from "./zoomPan";
 export { attachGridOverlay, drawGrid, snapToGrid } from "./grid";
 export { attachSmartGuides } from "./guides";
-export { attachHistoryTracking, attachUndoRedoShortcuts, restoreSnapshot } from "./history";
+export { attachUndoRedoShortcuts, restoreSnapshot } from "./history";
 export { attachKeyboardShortcuts } from "./shortcuts";
 export { attachTextToolHandlers } from "./textTool";
 export {

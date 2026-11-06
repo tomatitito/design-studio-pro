@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src", "../../src/extensions/sdk.ts"]
+}
